@@ -406,14 +406,13 @@ app.post('/', async (req, res) => {
         const total = tempData.price * qty;
 
         await editMessage(chatId, messageId, `
-      **Подтверждение продажи**
+      **Подтвердите продажу**
 
       Товар: *${tempData.product}*  
-      Ціна: *${tempData.price} ₴*  
-      Кількість: *${qty} шт*  
-      Сума: *${total} ₴*
+      Цена: *${tempData.price} ₴*  
+      Количество: *${qty} шт*  
 
-      Подтвердить?
+      Всё верно?
       `.trim(), {
           parse_mode: 'Markdown',
           reply_markup: {
@@ -441,10 +440,9 @@ app.post('/', async (req, res) => {
           `Продажа: ${tempData.qty} × ${tempData.price} ₴ = ${total} ₴`
         );
 
-        // Запис у Log (без стовпця "Повернення")
         await addToLog(
           saleDate,
-          'Продаж',
+          'Продажа',
           tempData.product,
           tempData.qty,
           tempData.price,
