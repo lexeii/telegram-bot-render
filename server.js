@@ -20,47 +20,6 @@ try {
 const sheets = google.sheets({ version: 'v4', auth });
 
 
-// ==== LOG TO SHEET ===
-
-async function logToSheet(timestamp, payload, updateId) {
-  try {
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: 'Log!C:C'
-    });
-    const existingIds = res.data.values ? res.data.values.flat().map(String) : [];
-    if (existingIds.includes(String(updateId))) return false;
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_ID,
-      range: 'Log!A:C',
-      valueInputOption: 'RAW',
-      insertDataOption: 'INSERT_ROWS',
-      requestBody: { values: [[timestamp, payload, updateId]] }
-    });
-    return true;
-  } catch (err) {
-    console.error('Sheets error:', err);
-    return false;
-  }
-}
-
-
-// === GET LOG COUNT ===
-
-async function getLogCount() {
-  try {
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: 'Log!A:A'
-    });
-    return res.data.values ? res.data.values.length : 0;
-  } catch (err) {
-    return 0;
-  }
-}
-
-
 // === SEND MESSAGE ===
 
 async function sendMessage(chatId, text, options = {}) {
@@ -83,56 +42,16 @@ async function editMessage(chatId, messageId, text, options = {}) {
 }
 
 
-// === EDIT OR SEND ===
-
-async function editOrSend(chatId, messageId, text, options = {}) {
-  // If messageId exists - try to edit
-  if (messageId) {
-    try {
-      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          message_id: messageId,
-          text,
-          parse_mode: 'Markdown',
-          ...options
-        })
-      });
-      console.log('Message edited');
-      return;
-    } catch (err) {
-      console.log('Can\'t edit - send new');
-      // Ignore error - send new message
-    }
-  }
-
-  // If can't edit - send new
-  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      parse_mode: 'Markdown',
-      ...options
-    })
-  });
-  const json = await res.json();
-  console.log('Sent New message:', json);
-}
-
-
 // === GET PRICES FOR PRODUCT ===
 
 async function getPricesForProduct(product) {
+  const sheetName = await getSetting('REST_SHEET_NAME') || 'Rest';
   const rest = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: 'Rest!A:B'
+    range: `${sheetName}!A:B`
   });
   const rows = rest.data.values || [];
-  return [...new Set(rows.filter(r => r[0] === product).map(r => r[1]))].sort((a,b) => a-b);
+  return [...new Set(rows.filter(r => r[0] === product).map(r => r[1]))].sort((a, b) => a - b);
 }
 
 
@@ -160,7 +79,8 @@ async function showGoodsPage(chatId, messageId, goods, page) {
   if (end < goods.length) nav.push({ text: 'Вперед ▶', callback_data: `sale_page_${page + 1}` });
   if (nav.length) keyboard.push(nav);
 
-  const text = `**Продажа.** Товары (${start + 1}-${end} из ${goods.length}):`;
+  const totalPages = Math.ceil(goods.length / perPage);
+  const text = `**Продажа.** Товары ${page + 1}/${totalPages}:`;
 
   if (messageId) {
     await editMessage(chatId, messageId, text, { reply_markup: { inline_keyboard: keyboard } });
@@ -176,7 +96,7 @@ async function showGoodsPage(chatId, messageId, goods, page) {
       })
     });
     const json = await res.json();
-    return json.result.message_id;  // Return ID of new message
+    return json.result.message_id;
   }
 }
 
@@ -186,10 +106,10 @@ async function showGoodsPage(chatId, messageId, goods, page) {
 async function showPricesPage(chatId, messageId, product, prices, page = 0) {
   const perPage = 10;
   const start = page * perPage;
-  const end = start + perPage;
+  const end = Math.min(start + perPage, prices.length);
   const pagePrices = prices.slice(start, end);
 
-  // 2 колонки
+  // 2 columns
   const keyboard = [];
   for (let i = 0; i < pagePrices.length; i += 2) {
     const row = [{ text: `${pagePrices[i]} ₴`, callback_data: `sale_price_${pagePrices[i]}` }];
@@ -199,12 +119,16 @@ async function showPricesPage(chatId, messageId, product, prices, page = 0) {
     keyboard.push(row);
   }
 
+  // Pagination
   const nav = [];
   if (page > 0) nav.push({ text: '◀ Назад', callback_data: `price_page_${page - 1}` });
   if (end < prices.length) nav.push({ text: 'Вперед ▶', callback_data: `price_page_${page + 1}` });
   if (nav.length) keyboard.push(nav);
 
-  await editMessage(chatId, messageId, `**Продажа: ${product}.** Цены (${start + 1}-${Math.min(end, prices.length)} из ${prices.length}):`, {
+  const totalPages = Math.ceil(prices.length / perPage);
+  const text = `**Продажа: ${product}.** Цены ${page + 1}/${totalPages}:`;
+
+  await editMessage(chatId, messageId, text, {
     reply_markup: { inline_keyboard: keyboard }
   });
 }
@@ -248,26 +172,15 @@ async function addToLog(date, type, product, qty, price, total) {
 }
 
 
-// === GET SHEET ===
-
-async function getSheet(sheetName) {
-  const res = await sheets.spreadsheets.get({
-    spreadsheetId: SPREADSHEET_ID,
-    ranges: [sheetName]
-  });
-  return sheets.spreadsheets.values;  // For append/update
-}
-
-
 // === UPDATE MAIN MENU ===
 
-async function updateMainMenu(chatId) {
+async function getMainMenuKeyboard(chatId) {
   const today = formatDate(new Date());
   const user = await getUser(chatId);
   const isToday = !user?.customSaleDate || user.customSaleDate === today;
   const dateText = isToday ? `🗓️${today}` : `🔙${user.customSaleDate}`;
 
-  const keyboard = {
+  return {
     reply_markup: {
       keyboard: [
         ['Продажа', 'Приход', 'Списание'],
@@ -276,16 +189,6 @@ async function updateMainMenu(chatId) {
       resize_keyboard: true
     }
   };
-
-  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text: 'Главное меню:',
-      ...keyboard
-    })
-  });
 }
 
 
@@ -304,6 +207,91 @@ async function getSaleDate(chatId) {
     return user.customSaleDate;
   }
   return formatDate(new Date());
+}
+
+
+// === GET USER DATA ===
+
+async function getUser(chatId) {
+  const sheetName = await getSetting('USERS_SHEET_NAME') || 'Users';
+  const users = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${sheetName}!A:H`
+  });
+  const rows = users.data.values || [];
+  return rows.find(r => r[0] == chatId);
+}
+
+// === LOG ACTION ===
+
+async function logAction(user, action, details) {
+  const logSheet = await getSetting('LOG_SHEET_NAME') || 'Log';
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${logSheet}!A:G`,
+    valueInputOption: 'RAW',
+    requestBody: {
+      values: [[
+        new Date().toLocaleString('uk-UA'),
+        user[1] || user[0],
+        action,
+        details.product || '',
+        details.price || '',
+        details.quantity || '',
+        details.comment || ''
+      ]]
+    }
+  });
+}
+
+// === GET SETTING ===
+
+async function getSetting(key) {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: 'Settings!A:C'
+  });
+  const rows = res.data.values || [];
+  const row = rows.find(r => r[0] === key);
+  return row ? row[1] : null;
+}
+
+
+// === GET COLUMN ===
+
+async function getColumn(sheet, col) {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${sheet}!${col}:${col}`
+  });
+  return res.data.values ? res.data.values.flat() : [];
+}
+
+
+// === Refreshing step & temp_data ===
+
+async function updateUserStep(chatId, step, tempData = {}) {
+  const sheetName = await getSetting('USERS_SHEET_NAME') || 'Users';
+
+  const users = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${sheetName}!A:F`
+  });
+  const rows = users.data.values || [];
+  const rowIndex = rows.findIndex(r => r[0] == chatId);
+  if (rowIndex === -1) return false;
+
+  const newRow = [...rows[rowIndex]];
+  newRow[4] = step;
+  newRow[5] = JSON.stringify(tempData);
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${sheetName}!A${rowIndex + 1}:F${rowIndex + 1}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [newRow] }
+  });
+  return true;
 }
 
 
@@ -449,6 +437,7 @@ app.post('/', async (req, res) => {
           total
         );
 
+        const keyboard = await getMainMenuKeyboard(chatId); // Refresh date button
         await editMessage(chatId, messageId, `
       **Продажа введена!**
 
@@ -458,10 +447,9 @@ app.post('/', async (req, res) => {
       Дата: *${saleDate}*
 
       Спасибо!
-      `.trim(), { parse_mode: 'Markdown' });
+      `.trim(), { parse_mode: 'Markdown', ...keyboard });
 
         await updateUserStep(chatId, '');
-        await updateMainMenu(chatId);  // Refresh date button
         return res.send('OK');
       }
 
@@ -478,21 +466,24 @@ app.post('/', async (req, res) => {
       // === Select any date (including today) ===
       if (callbackData?.startsWith('set_date_')) {
         const selectedDate = callbackData.replace('set_date_', '');
+        const today = formatDate(new Date());
 
-        // If "today" selected - remove custom date
-        if (selectedDate === formatDate(new Date())) {
+        let text;
+        if (selectedDate === today) {
           await updateUserStep(chatId, { customSaleDate: null });
-          await sendMessage(chatId, `Дата продажи: *сегодня*`, { parse_mode: 'Markdown' });
+          text = `Дата продажи: *сегодня*`;
         } else {
           await updateUserStep(chatId, { customSaleDate: selectedDate });
-          await sendMessage(chatId, `Дата продажи: *${selectedDate}*`, { parse_mode: 'Markdown' });
+          text = `Дата продажи: *${selectedDate}*`;
         }
 
-        await updateMainMenu(chatId);
+        const keyboard = await getMainMenuKeyboard(chatId);
+        await sendMessage(chatId, text, { parse_mode: 'Markdown', ...keyboard });
+
         return res.send('OK');
       }
 
-      
+
       if (callbackData === 'set_date_other') {
         await sendMessage(chatId, 'Введите дату: ДД.ММ.ГГГГ', {
           reply_markup: { inline_keyboard: [[{ text: 'Отмена', callback_data: 'sale_cancel' }]] }
@@ -510,10 +501,13 @@ app.post('/', async (req, res) => {
     
     if (text === '/start') {
       const startMsg = await getSetting('START_MSG') || 'Добро пожаловать!';
+      const keyboard = await getMainMenuKeyboard(chatId);
+      await sendMessage(chatId, startMsg, { ...keyboard });
+
       await updateUserStep(chatId, '');
-      await updateMainMenu(chatId);
       return res.send('OK');
     }
+
 
     // === Продажа ===
     
@@ -569,8 +563,9 @@ app.post('/', async (req, res) => {
 
       const formatted = `${d.padStart(2, '0')}.${m.padStart(2, '0')}.${y}`;
       await updateUserStep(chatId, { customSaleDate: formatted });
-      await sendMessage(chatId, `Дата: *${formatted}*`, { parse_mode: 'Markdown' });
-      await updateMainMenu(chatId);
+      const keyboard = await getMainMenuKeyboard(chatId);
+      await sendMessage(chatId, `Дата: *${formatted}*`, { parse_mode: 'Markdown', ...keyboard });
+
       await updateUserStep(chatId, '');
       return res.send('OK');
     }
@@ -585,79 +580,3 @@ app.post('/', async (req, res) => {
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Bot on port ${port}`));
-
-// === Business logic ===
-
-// Read settings
-async function getSetting(key) {
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: 'Settings!A:C'
-  });
-  const rows = res.data.values || [];
-  const row = rows.find(r => r[0] === key);
-  return row ? row[1] : null;
-}
-
-// Read column
-async function getColumn(sheet, col) {
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${sheet}!${col}:${col}`
-  });
-  return res.data.values ? res.data.values.flat() : [];
-}
-
-// Refreshing step & temp_data
-async function updateUserStep(chatId, step, tempData = {}) {
-  const users = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: 'Users!A:F'
-  });
-  const rows = users.data.values || [];
-  const rowIndex = rows.findIndex(r => r[0] == chatId);
-  if (rowIndex === -1) return false;
-
-  const newRow = [...rows[rowIndex]];
-  newRow[4] = step;
-  newRow[5] = JSON.stringify(tempData);
-
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `Users!A${rowIndex + 1}:F${rowIndex + 1}`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [newRow] }
-  });
-  return true;
-}
-
-// Get user data
-async function getUser(chatId) {
-  const users = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: 'Users!A:F'
-  });
-  const rows = users.data.values || [];
-  return rows.find(r => r[0] == chatId);
-}
-
-// Action log
-async function logAction(user, action, details) {
-  const logSheet = await getSetting('LOG_SHEET_NAME') || 'Log';
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${logSheet}!A:G`,
-    valueInputOption: 'RAW',
-    requestBody: {
-      values: [[
-        new Date().toLocaleString('uk-UA'),
-        user[1] || user[0],
-        action,
-        details.product || '',
-        details.price || '',
-        details.quantity || '',
-        details.comment || ''
-      ]]
-    }
-  });
-}
