@@ -70,6 +70,27 @@ async function editMessage(chatId, messageId, text, options = {}) {
   });
 }
 
+async function editOrSend(chatId, messageId, text, options = {}) {
+  if (messageId) {
+    try {
+      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, message_id: messageId, text, parse_mode: 'Markdown', ...options })
+      });
+      return;
+    } catch (err) {
+      console.log('Не вдалося відредагувати — надсилаємо нове');
+    }
+  }
+  // Якщо не вдалося відредагувати — надсилаємо нове
+  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown', ...options })
+  });
+}
+
 async function getPricesForProduct(product) {
   const rest = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
