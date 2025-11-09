@@ -405,8 +405,10 @@ app.post('/', async (req, res) => {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
-              [{ text: 'Да, всё верно', callback_data: 'sale_confirm' }],
-              [{ text: 'Изменить', callback_data: 'sale_cancel' }]
+              [
+                { text: 'Да, всё верно', callback_data: 'sale_confirm' },
+                { text: 'Изменить', callback_data: 'sale_cancel' }
+              ]
             ]
           }
         });
