@@ -20,9 +20,8 @@ try {
 const sheets = google.sheets({ version: 'v4', auth });
 
 
-  ////////////////////
- /// LOG TO SHEET ///
-////////////////////
+// ==== LOG TO SHEET ===
+
 async function logToSheet(timestamp, payload, updateId) {
   try {
     const res = await sheets.spreadsheets.values.get({
@@ -47,9 +46,8 @@ async function logToSheet(timestamp, payload, updateId) {
 }
 
 
-  /////////////////////
- /// GET LOG COUNT ///
-/////////////////////
+// === GET LOG COUNT ===
+
 async function getLogCount() {
   try {
     const res = await sheets.spreadsheets.values.get({
@@ -63,9 +61,8 @@ async function getLogCount() {
 }
 
 
-  ////////////////////
- /// SEND MESSAGE ///
-////////////////////
+// === SEND MESSAGE ===
+
 async function sendMessage(chatId, text, options = {}) {
   await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: 'POST',
@@ -75,9 +72,8 @@ async function sendMessage(chatId, text, options = {}) {
 }
 
 
-  ////////////////////
- /// EDIT MESSAGE ///
-////////////////////
+// === EDIT MESSAGE ===
+
 async function editMessage(chatId, messageId, text, options = {}) {
   await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
     method: 'POST',
@@ -87,11 +83,10 @@ async function editMessage(chatId, messageId, text, options = {}) {
 }
 
 
-  ////////////////////
- /// EDIT OR SEND ///
-////////////////////
+// === EDIT OR SEND ===
+
 async function editOrSend(chatId, messageId, text, options = {}) {
-  // Якщо є messageId — спробуємо відредагувати
+  // If messageId exists - try to edit
   if (messageId) {
     try {
       await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
@@ -105,15 +100,15 @@ async function editOrSend(chatId, messageId, text, options = {}) {
           ...options
         })
       });
-      console.log('Повідомлення відредаговано');
+      console.log('Message edited');
       return;
     } catch (err) {
-      console.log('Не вдалося відредагувати — надсилаємо нове');
-      // Ігноруємо помилку — надсилаємо нове
+      console.log('Can\'t edit - send new');
+      // Ignore error - send new message
     }
   }
 
-  // Якщо не вдалося відредагувати — надсилаємо нове
+  // If can't edit - send new
   const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -125,13 +120,12 @@ async function editOrSend(chatId, messageId, text, options = {}) {
     })
   });
   const json = await res.json();
-  console.log('Надіслано нове повідомлення:', json);
+  console.log('Sent New message:', json);
 }
 
 
-  //////////////////////////////
- /// GET PRICES FOR PRODUCT ///
-//////////////////////////////
+// === GET PRICES FOR PRODUCT ===
+
 async function getPricesForProduct(product) {
   const rest = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
@@ -142,9 +136,8 @@ async function getPricesForProduct(product) {
 }
 
 
-  ///////////////////////
- /// SHOW GOODS PAGE ///
-///////////////////////
+// === SHOW GOODS PAGE ===
+
 async function showGoodsPage(chatId, messageId, goods, page) {
   const perPage = 10;
   const start = page * perPage;
@@ -164,7 +157,7 @@ async function showGoodsPage(chatId, messageId, goods, page) {
   // Pagination
   const nav = [];
   if (page > 0) nav.push({ text: '◀ Назад', callback_data: `sale_page_${page - 1}` });
-  if (end < goods.length) nav.push({ text: 'Далі ▶', callback_data: `sale_page_${page + 1}` });
+  if (end < goods.length) nav.push({ text: 'Вперед ▶', callback_data: `sale_page_${page + 1}` });
   if (nav.length) keyboard.push(nav);
 
   const text = `**Продажа.** Товары (${start + 1}-${end} из ${goods.length}):`;
@@ -183,14 +176,13 @@ async function showGoodsPage(chatId, messageId, goods, page) {
       })
     });
     const json = await res.json();
-    return json.result.message_id;  // Повертаємо ID нового повідомлення
+    return json.result.message_id;  // Return ID of new message
   }
 }
 
 
-  ////////////////////////
- /// SHOW PRICES PAGE ///
-////////////////////////
+// === SHOW PRICES PAGE ===
+
 async function showPricesPage(chatId, messageId, product, prices, page = 0) {
   const perPage = 10;
   const start = page * perPage;
@@ -200,102 +192,136 @@ async function showPricesPage(chatId, messageId, product, prices, page = 0) {
   // 2 колонки
   const keyboard = [];
   for (let i = 0; i < pagePrices.length; i += 2) {
-    const row = [{ text: `${pagePrices[i]} грн`, callback_data: `sale_price_${pagePrices[i]}` }];
+    const row = [{ text: `${pagePrices[i]} ₴`, callback_data: `sale_price_${pagePrices[i]}` }];
     if (i + 1 < pagePrices.length) {
-      row.push({ text: `${pagePrices[i + 1]} грн`, callback_data: `sale_price_${pagePrices[i + 1]}` });
+      row.push({ text: `${pagePrices[i + 1]} ₴`, callback_data: `sale_price_${pagePrices[i + 1]}` });
     }
     keyboard.push(row);
   }
 
   const nav = [];
   if (page > 0) nav.push({ text: '◀ Назад', callback_data: `price_page_${page - 1}` });
-  if (end < prices.length) nav.push({ text: 'Далі ▶', callback_data: `price_page_${page + 1}` });
+  if (end < prices.length) nav.push({ text: 'Вперед ▶', callback_data: `price_page_${page + 1}` });
   if (nav.length) keyboard.push(nav);
 
-  await editMessage(chatId, messageId, `**Продажа: ${product}.** Ціни (${start + 1}-${Math.min(end, prices.length)} из ${prices.length}):`, {
+  await editMessage(chatId, messageId, `**Продажа: ${product}.** Цены (${start + 1}-${Math.min(end, prices.length)} из ${prices.length}):`, {
     reply_markup: { inline_keyboard: keyboard }
   });
 }
 
 
-  ///////////////////
- /// ADD TO REST ///
-///////////////////
+// === ADD TO REST ===
+
 async function addToRest(product, qty, note) {
   try {
     const sheetName = await getSetting('REST_SHEET_NAME') || 'Rest';
     const res = await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${sheetName}!A:H`,  // Додаємо рядок з датою, типом, коментарем
+      range: `${sheetName}!A:H`,  // Add row with date, type, comment
       valueInputOption: 'RAW',
       insertDataOption: 'INSERT_ROWS',
       requestBody: {
-        values: [[new Date().toLocaleDateString('uk-UA'), 'Продаж', product, qty, note, '', '', '']]
+        values: [[new Date().toLocaleDateString('uk-UA'), 'Продажа', product, qty, note, '', '', '']]
       }
     });
-    console.log('Записано в Rest');
+    console.log('Записано в лист Rest');
   } catch (err) {
-    console.error('Помилка Rest:', err);
+    console.error('Ошибка на листе Rest:', err);
   }
 }
 
 
-  //////////////////
- /// ADD TO LOG ///
-//////////////////
-async function addToLog(date, type, product, qty, price, total, returnDate) {
+// === ADD TO LOG ===
+
+async function addToLog(date, type, product, qty, price, total) {
   try {
     const sheetName = await getSetting('LOG_SHEET_NAME') || 'Log';
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${sheetName}!A:G`,
+      range: `${sheetName}!A:F`,  // A:Дата, B:Тип, C:Товар, D:Кол-во, E:Цена, F:Сумма
       valueInputOption: 'RAW',
-      requestBody: {
-        values: [[date, type, product, qty, price, total, returnDate]]
-      }
+      requestBody: { values: [[date, type, product, qty, price, total]] }
     });
-    console.log('Записано в Log');
   } catch (err) {
-    console.error('Помилка Log:', err);
+    console.error('Log error:', err);
   }
 }
 
 
-  /////////////////
- /// GET SHEET ///
-/////////////////
+// === GET SHEET ===
+
 async function getSheet(sheetName) {
   const res = await sheets.spreadsheets.get({
     spreadsheetId: SPREADSHEET_ID,
     ranges: [sheetName]
   });
-  return sheets.spreadsheets.values;  // Для append/update
+  return sheets.spreadsheets.values;  // For append/update
+}
+
+
+// === UPDATE MAIN MENU ===
+
+async function updateMainMenu(chatId) {
+  const today = formatDate(new Date());
+  const user = await getUser(chatId);
+  const isToday = !user?.customSaleDate || user.customSaleDate === today;
+  const dateText = isToday ? `🗓️${today}` : `🔙${user.customSaleDate}`;
+
+  const keyboard = {
+    reply_markup: {
+      keyboard: [
+        ['Продажа', 'Приход', 'Списание'],
+        ['Уценка', 'Возврат', dateText]
+      ],
+      resize_keyboard: true
+    }
+  };
+
+  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: 'Главное меню:',
+      ...keyboard
+    })
+  });
+}
+
+
+// === FORMAT DATE ===
+
+function formatDate(date) {
+  return date.toLocaleDateString('uk-UA');  // 09.11.2025
+}
+
+
+// === GET SALE DATE ===
+
+async function getSaleDate(chatId) {
+  const user = await getUser(chatId);
+  if (user?.customSaleDate) {
+    return user.customSaleDate;
+  }
+  return formatDate(new Date());
 }
 
 
 // === Webhook ===
+
 app.get('/', (req, res) => res.send('Webhook ready.'));
 
 
-const MAIN_MENU = {
-  reply_markup: {
-    keyboard: [['Продажа', 'Приход', 'Списание'], ['Переоценка', 'Возврат']],
-    resize_keyboard: true
-  }
-};
+// === APP.POST ===
 
-
-  ////////////////
- /// APP.POST ///
-////////////////
 app.post('/', async (req, res) => {
   try {
     const data = req.body;
-    console.log('ОТРИМАНО:', JSON.stringify(data, null, 2)); // ← ДІАГНОСТИКА
+    console.log('GOT:', JSON.stringify(data, null, 2)); // ← DEBUG
 
     const message = data.message || data.callback_query?.message;
     if (!message) {
-      console.log('Немає message — ігноруємо');
+      console.log('No message - ignore');
       return res.send('OK');
     }
 
@@ -314,12 +340,12 @@ app.post('/', async (req, res) => {
     const userStep = user[4] || '';
     const tempData = user[5] ? JSON.parse(user[5]) : {};
 
-    // === ОБРОБКА CALLBACK_QUERY (ПЕРШИЙ) ===
+    // === PROCESSING CALLBACK_QUERY (FIRST) ===
     if (data.callback_query) {
       const callbackData = data.callback_query.data;
       const messageId = data.callback_query.message.message_id;
 
-      // Пагинація товарів
+      // Pagination of goods
       if (callbackData.startsWith('sale_page_') && userStep === 'sale_step_1') {
         const page = Number(callbackData.replace('sale_page_', ''));
         const goods = await getColumn('Goods', 'A');
@@ -329,7 +355,7 @@ app.post('/', async (req, res) => {
       }
 
       
-      // Вибір товару
+      // Goods select
       if (callbackData.startsWith('sale_product_') && userStep === 'sale_step_1') {
         const product = callbackData.replace('sale_product_', '');
         const prices = await getPricesForProduct(product);
@@ -338,7 +364,7 @@ app.post('/', async (req, res) => {
         return res.send('OK');
       }
 
-      // Пагинація цін
+      // Pagination of prices
       if (callbackData.startsWith('price_page_') && userStep === 'sale_step_2') {
         const page = Number(callbackData.replace('price_page_', ''));
         const prices = await getPricesForProduct(tempData.product);
@@ -347,16 +373,16 @@ app.post('/', async (req, res) => {
         return res.send('OK');
       }
 
-      // Вибір ціни
+      // Price select
       if (callbackData.startsWith('sale_price_') && userStep === 'sale_step_2') {
         const price = Number(callbackData.replace('sale_price_', ''));
-        await editMessage(chatId, messageId, `**Продажа: ${tempData.product} ${price} грн.** Кількість:`, {
+        await editMessage(chatId, messageId, `**Продажа: ${tempData.product} ${price} ₴.** Количество:`, {
           reply_markup: {
             inline_keyboard: [
               [{ text: '1', callback_data: `sale_qty_1` }],
               [{ text: '2', callback_data: `sale_qty_2` }],
               [{ text: '3', callback_data: `sale_qty_3` }],
-              [{ text: 'Інше...', callback_data: 'sale_qty_other' }]
+              [{ text: 'Другое…', callback_data: 'sale_qty_other' }]
             ]
           }
         });
@@ -364,12 +390,12 @@ app.post('/', async (req, res) => {
         return res.send('OK');
       }
 
-      // === Крок 3: вибір кількості → повернення? ===
+      // === Step 3: quantity selection → confirmation ===
       if (callbackData.startsWith('sale_qty_') && userStep === 'sale_step_3') {
         let qty;
         if (callbackData === 'sale_qty_other') {
-          await editMessage(chatId, messageId, `**Продажа: ${tempData.product} ${tempData.price} грн.**\n\nВведіть кількість:`, {
-            reply_markup: { inline_keyboard: [[{ text: 'Скасувати', callback_data: 'sale_cancel' }]] }
+          await editMessage(chatId, messageId, `**Продажа: ${tempData.product} ${tempData.price} ₴.**\n\nВведите количество:`, {
+            reply_markup: { inline_keyboard: [[{ text: 'Отмена', callback_data: 'sale_cancel' }]] }
           });
           await updateUserStep(chatId, 'sale_step_qty_input', { ...tempData });
           return res.send('OK');
@@ -377,149 +403,113 @@ app.post('/', async (req, res) => {
           qty = Number(callbackData.replace('sale_qty_', ''));
         }
 
-        // Питаємо: "Можливість повернення?"
-        await editMessage(chatId, messageId, `
-      **Продажа: ${tempData.product}**
-
-      Ціна: *${tempData.price} грн*  
-      Кількість: *${qty}*
-
-      Можливість повернення?
-      `.trim(), {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: 'Так', callback_data: 'sale_return_yes' }],
-              [{ text: 'Ні', callback_data: 'sale_return_no' }],
-              [{ text: 'Скасувати', callback_data: 'sale_cancel' }]
-            ]
-          }
-        });
-
-        await updateUserStep(chatId, 'sale_step_return', { ...tempData, qty });
-        return res.send('OK');
-      }
-
-      // === Крок: введення дати повернення ===
-      if (callbackData === 'sale_return_yes' && userStep === 'sale_step_return') {
-        await editMessage(chatId, messageId, `
-      **Можливість повернення: Так**
-
-      Введіть кінцеву дату повернення (наприклад, 15.11.2025):
-      `.trim(), {
-          reply_markup: { inline_keyboard: [[{ text: 'Скасувати', callback_data: 'sale_cancel' }]] }
-        });
-        await updateUserStep(chatId, 'sale_step_return_date', tempData);
-        return res.send('OK');
-      }
-
-      // === Крок: "Ні" → одразу підтвердження ===
-      if (callbackData === 'sale_return_no' && userStep === 'sale_step_return') {
-        const total = tempData.price * tempData.qty;
+        const total = tempData.price * qty;
 
         await editMessage(chatId, messageId, `
-      **Підтвердження продажу**
+      **Подтверждение продажи**
 
       Товар: *${tempData.product}*  
-      Кількість: *${tempData.qty} шт*  
-      Ціна: *${tempData.price} грн*  
-      Сума: *${total} грн*  
-      Повернення: *Ні*
+      Ціна: *${tempData.price} ₴*  
+      Кількість: *${qty} шт*  
+      Сума: *${total} ₴*
 
-      Підтвердити?
+      Подтвердить?
       `.trim(), {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
-              [{ text: 'Так, підтвердити', callback_data: 'sale_confirm' }],
-              [{ text: 'Змінити', callback_data: 'sale_cancel' }]
-            ]
-          }
-        });
-        await updateUserStep(chatId, 'sale_step_final_confirm', { ...tempData, returnOption: 'no' });
-        return res.send('OK');
-      }
-
-      // === Введення дати повернення (текст) ===
-      if (userStep === 'sale_step_return_date' && message?.text) {
-        const returnDate = message.text.trim();
-        const total = tempData.price * tempData.qty;
-
-        await editMessage(chatId, messageId, `
-      **Підтвердження продажу**
-
-      Товар: *${tempData.product}*  
-      Кількість: *${tempData.qty} шт*  
-      Ціна: *${tempData.price} грн*  
-      Сума: *${total} грн*  
-      Повернення: *Так, до ${returnDate}*
-
-      Підтвердити?
-      `.trim(), {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: 'Так, підтвердити', callback_data: 'sale_confirm' }],
-              [{ text: 'Змінити', callback_data: 'sale_cancel' }]
+              [{ text: 'Да, всё верно', callback_data: 'sale_confirm' }],
+              [{ text: 'Изменить', callback_data: 'sale_cancel' }]
             ]
           }
         });
 
-        await updateUserStep(chatId, 'sale_step_final_confirm', { ...tempData, returnOption: 'yes', returnDate });
+        await updateUserStep(chatId, 'sale_step_confirm', { ...tempData, qty, total });
         return res.send('OK');
       }
 
 
-      // === Фінальне підтвердження ===
-      if (callbackData === 'sale_confirm' && userStep === 'sale_step_final_confirm') {
+      // === Final confirmation ===
+      if (callbackData === 'sale_confirm' && userStep === 'sale_step_confirm') {
         const total = tempData.price * tempData.qty;
-        const returnText = tempData.returnOption === 'yes' ? `Так, до ${tempData.returnDate}` : 'Ні';
+        const saleDate = await getSaleDate(chatId);  // ← Get date
 
-        // Запис у Rest
+        // Write to Rest sheet
         await addToRest(
           tempData.product,
           -tempData.qty,
-          `Продаж: ${tempData.qty} × ${tempData.price} грн = ${total} грн | Повернення: ${returnText}`
+          `Продажа: ${tempData.qty} × ${tempData.price} ₴ = ${total} ₴`
         );
 
-        // Запис у Log
+        // Запис у Log (без стовпця "Повернення")
         await addToLog(
-          new Date().toISOString().split('T')[0],
+          saleDate,
           'Продаж',
           tempData.product,
           tempData.qty,
           tempData.price,
-          total,
-          tempData.returnOption === 'yes' ? tempData.returnDate : 'Ні'
+          total
         );
 
         await editMessage(chatId, messageId, `
-      **Продаж зареєстровано!**
+      **Продажа введена!**
 
       *${tempData.product}*  
-      Кількість: *${tempData.qty} шт*  
-      Сума: *${total} грн*  
-      Повернення: *${returnText}*
+      Количество: *${tempData.qty} шт.*  
+      Сумма: *${total} ₴*  
+      Дата: *${saleDate}*
+
+      Спасибо!
       `.trim(), { parse_mode: 'Markdown' });
 
         await updateUserStep(chatId, '');
+        await updateMainMenu(chatId);  // Refresh date button
         return res.send('OK');
       }
 
 
       if (callbackData === 'sale_cancel') {
-        await editMessage(chatId, messageId, 'Продаж скасовано.', {
+        await editMessage(chatId, messageId, 'Продажа отменена.', {
           reply_markup: { inline_keyboard: [] }
         });
         await updateUserStep(chatId, '');
         return res.send('OK');
       }
+
+      
+      // === Select any date (including today) ===
+      if (callbackData?.startsWith('set_date_')) {
+        const selectedDate = callbackData.replace('set_date_', '');
+
+        // If "today" selected - remove custom date
+        if (selectedDate === formatDate(new Date())) {
+          await updateUser(chatId, { customSaleDate: null });
+          await sendMessage(chatId, `Дата продажи: *сегодня*`, { parse_mode: 'Markdown' });
+        } else {
+          await updateUser(chatId, { customSaleDate: selectedDate });
+          await sendMessage(chatId, `Дата продажи: *${selectedDate}*`, { parse_mode: 'Markdown' });
+        }
+
+        await updateMainMenu(chatId);
+        return res.send('OK');
+      }
+
+      
+      if (callbackData === 'set_date_other') {
+        await sendMessage(chatId, 'Введите дату: ДД.ММ.ГГГГ', {
+          reply_markup: { inline_keyboard: [[{ text: 'Отмена', callback_data: 'sale_cancel' }]] }
+        });
+        await updateUserStep(chatId, 'awaiting_custom_date', {});
+        return res.send('OK');
+      }
+      
     }
 
     
-    // === ТЕПЕР текст (Продажа, /start тощо) ===
+    // === THEN text (Продажа, /start etc.) ===
     
     // === /start ===
+    
     if (text === '/start') {
       const startMsg = await getSetting('START_MSG') || 'Добро пожаловать!';
       await sendMessage(chatId, startMsg, MAIN_MENU);
@@ -528,6 +518,7 @@ app.post('/', async (req, res) => {
     }
 
     // === Продажа ===
+    
     if (text === 'Продажа' || userStep.startsWith('sale_')) {
       console.log('УВІЙШЛИ В ПРОДАЖУ'); // ← ПЕРЕВІРКА
       if (!userStep) {
@@ -537,6 +528,56 @@ app.post('/', async (req, res) => {
       }
     }
 
+    // === Натиснута кнопка дати (з Calendar або Back) ===
+    if (text.includes('🗓️') || text.includes('🔙')) {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const dayBefore = new Date();
+      dayBefore.setDate(dayBefore.getDate() - 2);
+      const today = formatDate(new Date());
+
+      await sendMessage(chatId, 'Выберите дату:', {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: formatDate(dayBefore), callback_data: `set_date_${formatDate(dayBefore)}` },
+              { text: formatDate(yesterday), callback_data: `set_date_${formatDate(yesterday)}` }
+            ],
+            [
+              { text: 'Сегодня', callback_data: `set_date_${today}` },
+              { text: 'Другая…', callback_data: 'set_date_other' }
+            ]
+          ]
+        }
+      });
+      return res.send('OK');
+    }
+
+    
+    if (userStep === 'awaiting_custom_date' && message?.text) {
+      const input = message.text.trim();
+      const regex = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/;
+      if (!regex.test(input)) {
+        await sendMessage(chatId, 'Неверный формат. ДД.ММ.ГГГГ');
+        return res.send('OK');
+      }
+
+      const [, d, m, y] = input.match(regex);
+      const date = new Date(`${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`);
+      if (isNaN(date.getTime()) || date.getDate() != d || date.getMonth() + 1 != m || date.getFullYear() != y) {
+        await sendMessage(chatId, 'Неверная дата. Попробуйте еще:');
+        return res.send('OK');
+      }
+
+      const formatted = `${d.padStart(2, '0')}.${m.padStart(2, '0')}.${y}`;
+      await updateUser(chatId, { customSaleDate: formatted });
+      await sendMessage(chatId, `Дата: *${formatted}*`, { parse_mode: 'Markdown' });
+      await updateMainMenu(chatId);
+      await updateUserStep(chatId, '');
+      return res.send('OK');
+    }
+
+    
     res.send('OK');
   } catch (err) {
     console.error('КРАШ В WEBHOOK:', err);
