@@ -70,26 +70,45 @@ async function editMessage(chatId, messageId, text, options = {}) {
   });
 }
 
+
 async function editOrSend(chatId, messageId, text, options = {}) {
+  // Якщо є messageId — спробуємо відредагувати
   if (messageId) {
     try {
       await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, message_id: messageId, text, parse_mode: 'Markdown', ...options })
+        body: JSON.stringify({
+          chat_id: chatId,
+          message_id: messageId,
+          text,
+          parse_mode: 'Markdown',
+          ...options
+        })
       });
+      console.log('Повідомлення відредаговано');
       return;
     } catch (err) {
       console.log('Не вдалося відредагувати — надсилаємо нове');
+      // Ігноруємо помилку — надсилаємо нове
     }
   }
+
   // Якщо не вдалося відредагувати — надсилаємо нове
-  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown', ...options })
+    body: JSON.stringify({
+      chat_id: chatId,
+      text,
+      parse_mode: 'Markdown',
+      ...options
+    })
   });
+  const json = await res.json();
+  console.log('Надіслано нове повідомлення:', json);
 }
+
 
 async function getPricesForProduct(product) {
   const rest = await sheets.spreadsheets.values.get({
@@ -156,10 +175,22 @@ app.post('/', async (req, res) => {
         const pageGoods = goods.slice(0, 10);
         const keyboard = pageGoods.map(g => [{ text: g, callback_data: `sale_product_${g}` }]);
 
-        await editOrSend(chatId, messageId, '**Продажа.** Выберите товар:', {
+        // НАДСИЛАЄМО НОВЕ ПОВІДОМЛЕННЯ (не редагуємо "Продажа")
+        await sendMessage(chatId, '**Продажа.** Выберите товар:', {
           reply_markup: { inline_keyboard: keyboard }
         });
         await updateUserStep(chatId, 'sale_step_1');
+        
+      // === Крок 2: вибір товару (через callback_query) ===
+      } else if (data.callback_query && userStep === 'sale_step_1') {
+        const product = data.callback_query.data.replace('sale_product_', '');
+        const prices = await getPricesForProduct(product);
+        const keyboard = prices.map(p => [{ text: `${p} грн`, callback_data: `sale_price_${p}` }]);
+
+        await editMessage(chatId, data.callback_query.message.message_id, `**Продажа: ${product}.** Выберите цену:`, {
+          reply_markup: { inline_keyboard: keyboard }
+        });
+        await updateUserStep(chatId, 'sale_step_2', { product });
       }
       // ... інші кроки ...
     }
