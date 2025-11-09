@@ -172,8 +172,18 @@ async function showGoodsPage(chatId, messageId, goods, page) {
   if (messageId) {
     await editMessage(chatId, messageId, text, { reply_markup: { inline_keyboard: keyboard } });
   } else {
-    const res = await sendMessage(chatId, text, { reply_markup: { inline_keyboard: keyboard } });
-    return res.message_id;
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: keyboard }
+      })
+    });
+    const json = await res.json();
+    return json.result.message_id;  // Повертаємо ID нового повідомлення
   }
 }
 
@@ -212,8 +222,21 @@ async function showPricesPage(chatId, messageId, product, prices, page = 0) {
  /// ADD TO REST ///
 ///////////////////
 async function addToRest(product, qty, note) {
-  const sheet = await getSheet('Rest');
-  await sheet.addRow([product, qty, note, new Date().toISOString()]);
+  try {
+    const sheetName = await getSetting('REST_SHEET_NAME') || 'Rest';
+    const res = await sheets.spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${sheetName}!A:H`,  // Додаємо рядок з датою, типом, коментарем
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: {
+        values: [[new Date().toLocaleDateString('uk-UA'), 'Продаж', product, qty, note, '', '', '']]
+      }
+    });
+    console.log('Записано в Rest');
+  } catch (err) {
+    console.error('Помилка Rest:', err);
+  }
 }
 
 
@@ -221,8 +244,32 @@ async function addToRest(product, qty, note) {
  /// ADD TO LOG ///
 //////////////////
 async function addToLog(date, type, product, qty, price, total, returnDate) {
-  const sheet = await getSheet('Log');
-  await sheet.addRow([date, type, product, qty, price, total, returnDate]);
+  try {
+    const sheetName = await getSetting('LOG_SHEET_NAME') || 'Log';
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${sheetName}!A:G`,
+      valueInputOption: 'RAW',
+      requestBody: {
+        values: [[date, type, product, qty, price, total, returnDate]]
+      }
+    });
+    console.log('Записано в Log');
+  } catch (err) {
+    console.error('Помилка Log:', err);
+  }
+}
+
+
+  /////////////////
+ /// GET SHEET ///
+/////////////////
+async function getSheet(sheetName) {
+  const res = await sheets.spreadsheets.get({
+    spreadsheetId: SPREADSHEET_ID,
+    ranges: [sheetName]
+  });
+  return sheets.spreadsheets.values;  // Для append/update
 }
 
 
@@ -485,15 +532,15 @@ app.post('/', async (req, res) => {
       console.log('УВІЙШЛИ В ПРОДАЖУ'); // ← ПЕРЕВІРКА
       if (!userStep) {
         const goods = await getColumn('Goods', 'A');
-        const messageId = await showGoodsPage(chatId, null, goods, 0);
-        await updateUserStep(chatId, 'sale_step_1', { page: 0, messageId });
+        const messageId = await showGoodsPage(chatId, null, goods, 0);  // Отримуємо ID
+        await updateUserStep(chatId, 'sale_step_1', { page: 0, messageId });  // Зберігаємо ID
       }
     }
 
     res.send('OK');
   } catch (err) {
-    console.error('ПОМИЛКА:', err);
-    res.send('OK');
+    console.error('КРАШ В WEBHOOK:', err);
+    res.status(500).send('Error');  // Замість 'OK' — щоб Telegram знав про проблему
   }
 });
 
