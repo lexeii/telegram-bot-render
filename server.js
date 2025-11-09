@@ -512,7 +512,6 @@ app.post('/', async (req, res) => {
     
     if (text === '/start') {
       const startMsg = await getSetting('START_MSG') || 'Добро пожаловать!';
-      await sendMessage(chatId, startMsg, MAIN_MENU);
       await updateUserStep(chatId, '');
       await updateMainMenu(chatId);
       return res.send('OK');
