@@ -179,6 +179,9 @@ const MAIN_MENU = {
 };
 
 
+  ////////////////
+ /// APP.POST ///
+////////////////
 app.post('/', async (req, res) => {
   try {
     const data = req.body;
@@ -191,7 +194,7 @@ app.post('/', async (req, res) => {
     }
 
     const chatId = message.chat.id;
-    const text = message.text;
+    const text = message.text || data.callback_query?.data;
     const messageId = message.message_id;
 
     console.log(`Користувач ${chatId} надіслав: "${text}"`);
@@ -205,60 +208,41 @@ app.post('/', async (req, res) => {
     const userStep = user[4] || '';
     const tempData = user[5] ? JSON.parse(user[5]) : {};
 
-    // === /start ===
-    if (text === '/start') {
-      const startMsg = await getSetting('START_MSG') || 'Добро пожаловать!';
-      await sendMessage(chatId, startMsg, MAIN_MENU);
-      await updateUserStep(chatId, '');
-      return res.send('OK');
-    }
+    // === ОБРОБКА CALLBACK_QUERY (ПЕРШИЙ) ===
+    if (data.callback_query) {
+      const callbackData = data.callback_query.data;
+      const messageId = data.callback_query.message.message_id;
 
-    // === Продажа ===
-    if (text === 'Продажа' || userStep.startsWith('sale_')) {
-      console.log('УВІЙШЛИ В ПРОДАЖУ'); // ← ПЕРЕВІРКА
-
-      // === Крок 1: товари з пагинацією ===
-      if (!userStep) {
-        console.log('Крок 1: показуємо товари');
+      // Пагинація товарів
+      if (callbackData.startsWith('sale_page_') && userStep === 'sale_step_1') {
+        const page = Number(callbackData.replace('sale_page_', ''));
         const goods = await getColumn('Goods', 'A');
-        const page = 0;
         await showGoodsPage(chatId, goods, page);
-        await updateUserStep(chatId, 'sale_step_1', { page: 0 });
-      }
-
-      // === Пагинація товарів ===
-      if (data.callback_query && userStep === 'sale_step_1' && text.startsWith('sale_page_')) {
-        const newPage = Number(text.replace('sale_page_', ''));
-        const goods = await getColumn('Goods', 'A');
-        await showGoodsPage(chatId, goods, newPage);
-        await updateUserStep(chatId, 'sale_step_1', { ...tempData, page: newPage });
+        await updateUserStep(chatId, 'sale_step_1', { ...tempData, page });
         return res.send('OK');
       }
 
-      // === Крок 2: вибір ціни ===
-      if (data.callback_query && userStep === 'sale_step_1' && text.startsWith('sale_product_')) {
-        const product = text.replace('sale_product_', '');
+      // Вибір товару
+      if (callbackData.startsWith('sale_product_') && userStep === 'sale_step_1') {
+        const product = callbackData.replace('sale_product_', '');
         const prices = await getPricesForProduct(product);
-        const messageId = data.callback_query.message.message_id;
-
         await showPricesPage(chatId, messageId, product, prices, 0);
         await updateUserStep(chatId, 'sale_step_2', { product, pricePage: 0 });
+        return res.send('OK');
       }
 
       // Пагинація цін
-      if (data.callback_query && userStep === 'sale_step_2' && text.startsWith('price_page_')) {
-        const page = Number(text.replace('price_page_', ''));
+      if (callbackData.startsWith('price_page_') && userStep === 'sale_step_2') {
+        const page = Number(callbackData.replace('price_page_', ''));
         const prices = await getPricesForProduct(tempData.product);
-        await showPricesPage(chatId, data.callback_query.message.message_id, tempData.product, prices, page);
+        await showPricesPage(chatId, messageId, tempData.product, prices, page);
         await updateUserStep(chatId, 'sale_step_2', { ...tempData, pricePage: page });
         return res.send('OK');
       }
 
-      // === Крок 3: вибір ціни (завершення) ===
-      if (data.callback_query && userStep === 'sale_step_2' && text.startsWith('sale_price_')) {
-        const price = Number(text.replace('sale_price_', ''));
-        const messageId = data.callback_query.message.message_id;
-
+      // Вибір ціни
+      if (callbackData.startsWith('sale_price_') && userStep === 'sale_step_2') {
+        const price = Number(callbackData.replace('sale_price_', ''));
         await editMessage(chatId, messageId, `**Продажа: ${tempData.product} ${price} грн.** Кількість:`, {
           reply_markup: {
             inline_keyboard: [
@@ -270,9 +254,29 @@ app.post('/', async (req, res) => {
           }
         });
         await updateUserStep(chatId, 'sale_step_3', { ...tempData, price });
+        return res.send('OK');
       }
+    }
 
-      // ... інші кроки ...
+    
+    // === ТЕПЕР текст (Продажа, /start тощо) ===
+    
+    // === /start ===
+    if (text === '/start') {
+      const startMsg = await getSetting('START_MSG') || 'Добро пожаловать!';
+      await sendMessage(chatId, startMsg, MAIN_MENU);
+      await updateUserStep(chatId, '');
+      return res.send('OK');
+    }
+
+    // === Продажа ===
+    if (text === 'Продажа' || userStep.startsWith('sale_')) {
+      console.log('УВІЙШЛИ В ПРОДАЖУ'); // ← ПЕРЕВІРКА
+      if (!userStep) {
+        const goods = await getColumn('Goods', 'A');
+        await showGoodsPage(chatId, goods, 0);
+        await updateUserStep(chatId, 'sale_step_1', { page: 0 });
+      }
     }
 
     res.send('OK');
