@@ -19,6 +19,10 @@ try {
 }
 const sheets = google.sheets({ version: 'v4', auth });
 
+
+  ////////////////////
+ /// LOG TO SHEET ///
+////////////////////
 async function logToSheet(timestamp, payload, updateId) {
   try {
     const res = await sheets.spreadsheets.values.get({
@@ -42,6 +46,10 @@ async function logToSheet(timestamp, payload, updateId) {
   }
 }
 
+
+  /////////////////////
+ /// GET LOG COUNT ///
+/////////////////////
 async function getLogCount() {
   try {
     const res = await sheets.spreadsheets.values.get({
@@ -54,6 +62,10 @@ async function getLogCount() {
   }
 }
 
+
+  ////////////////////
+ /// SEND MESSAGE ///
+////////////////////
 async function sendMessage(chatId, text, options = {}) {
   await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: 'POST',
@@ -62,6 +74,10 @@ async function sendMessage(chatId, text, options = {}) {
   });
 }
 
+
+  ////////////////////
+ /// EDIT MESSAGE ///
+////////////////////
 async function editMessage(chatId, messageId, text, options = {}) {
   await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
     method: 'POST',
@@ -71,6 +87,9 @@ async function editMessage(chatId, messageId, text, options = {}) {
 }
 
 
+  ////////////////////
+ /// EDIT OR SEND ///
+////////////////////
 async function editOrSend(chatId, messageId, text, options = {}) {
   // Якщо є messageId — спробуємо відредагувати
   if (messageId) {
@@ -110,6 +129,9 @@ async function editOrSend(chatId, messageId, text, options = {}) {
 }
 
 
+  //////////////////////////////
+ /// GET PRICES FOR PRODUCT ///
+//////////////////////////////
 async function getPricesForProduct(product) {
   const rest = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
@@ -120,26 +142,45 @@ async function getPricesForProduct(product) {
 }
 
 
-async function showGoodsPage(chatId, goods, page) {
+  ///////////////////////
+ /// SHOW GOODS PAGE ///
+///////////////////////
+async function showGoodsPage(chatId, messageId, goods, page) {
   const perPage = 10;
   const start = page * perPage;
-  const end = start + perPage;
+  const end = Math.min(start + perPage, goods.length);
   const pageGoods = goods.slice(start, end);
 
-  const keyboard = pageGoods.map(g => [{ text: g, callback_data: `sale_product_${g}` }]);
+  // 2 columns
+  const keyboard = [];
+  for (let i = 0; i < pageGoods.length; i += 2) {
+    const row = [{ text: pageGoods[i], callback_data: `sale_product_${pageGoods[i]}` }];
+    if (i + 1 < pageGoods.length) {
+      row.push({ text: pageGoods[i + 1], callback_data: `sale_product_${pageGoods[i + 1]}` });
+    }
+    keyboard.push(row);
+  }
 
-  // Кнопки пагинації
+  // Pagination
   const nav = [];
   if (page > 0) nav.push({ text: '◀ Назад', callback_data: `sale_page_${page - 1}` });
   if (end < goods.length) nav.push({ text: 'Далі ▶', callback_data: `sale_page_${page + 1}` });
   if (nav.length) keyboard.push(nav);
 
-  await sendMessage(chatId, `**Продажа.** Товары (${start + 1}-${Math.min(end, goods.length)} из ${goods.length}):`, {
-    reply_markup: { inline_keyboard: keyboard }
-  });
+  const text = `**Продажа.** Товары (${start + 1}-${end} из ${goods.length}):`;
+
+  if (messageId) {
+    await editMessage(chatId, messageId, text, { reply_markup: { inline_keyboard: keyboard } });
+  } else {
+    const res = await sendMessage(chatId, text, { reply_markup: { inline_keyboard: keyboard } });
+    return res.message_id;
+  }
 }
 
 
+  ////////////////////////
+ /// SHOW PRICES PAGE ///
+////////////////////////
 async function showPricesPage(chatId, messageId, product, prices, page = 0) {
   const perPage = 10;
   const start = page * perPage;
@@ -164,6 +205,24 @@ async function showPricesPage(chatId, messageId, product, prices, page = 0) {
   await editMessage(chatId, messageId, `**Продажа: ${product}.** Ціни (${start + 1}-${Math.min(end, prices.length)} из ${prices.length}):`, {
     reply_markup: { inline_keyboard: keyboard }
   });
+}
+
+
+  ///////////////////
+ /// ADD TO REST ///
+///////////////////
+async function addToRest(product, qty, note) {
+  const sheet = await getSheet('Rest');
+  await sheet.addRow([product, qty, note, new Date().toISOString()]);
+}
+
+
+  //////////////////
+ /// ADD TO LOG ///
+//////////////////
+async function addToLog(date, type, product, qty, price, total, returnDate) {
+  const sheet = await getSheet('Log');
+  await sheet.addRow([date, type, product, qty, price, total, returnDate]);
 }
 
 
@@ -217,11 +276,12 @@ app.post('/', async (req, res) => {
       if (callbackData.startsWith('sale_page_') && userStep === 'sale_step_1') {
         const page = Number(callbackData.replace('sale_page_', ''));
         const goods = await getColumn('Goods', 'A');
-        await showGoodsPage(chatId, goods, page);
+        await showGoodsPage(chatId, tempData.messageId, goods, page);
         await updateUserStep(chatId, 'sale_step_1', { ...tempData, page });
         return res.send('OK');
       }
 
+      
       // Вибір товару
       if (callbackData.startsWith('sale_product_') && userStep === 'sale_step_1') {
         const product = callbackData.replace('sale_product_', '');
@@ -256,6 +316,157 @@ app.post('/', async (req, res) => {
         await updateUserStep(chatId, 'sale_step_3', { ...tempData, price });
         return res.send('OK');
       }
+
+      // === Крок 3: вибір кількості → повернення? ===
+      if (callbackData.startsWith('sale_qty_') && userStep === 'sale_step_3') {
+        let qty;
+        if (callbackData === 'sale_qty_other') {
+          await editMessage(chatId, messageId, `**Продажа: ${tempData.product} ${tempData.price} грн.**\n\nВведіть кількість:`, {
+            reply_markup: { inline_keyboard: [[{ text: 'Скасувати', callback_data: 'sale_cancel' }]] }
+          });
+          await updateUserStep(chatId, 'sale_step_qty_input', { ...tempData });
+          return res.send('OK');
+        } else {
+          qty = Number(callbackData.replace('sale_qty_', ''));
+        }
+
+        // Питаємо: "Можливість повернення?"
+        await editMessage(chatId, messageId, `
+      **Продажа: ${tempData.product}**
+
+      Ціна: *${tempData.price} грн*  
+      Кількість: *${qty}*
+
+      Можливість повернення?
+      `.trim(), {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: 'Так', callback_data: 'sale_return_yes' }],
+              [{ text: 'Ні', callback_data: 'sale_return_no' }],
+              [{ text: 'Скасувати', callback_data: 'sale_cancel' }]
+            ]
+          }
+        });
+
+        await updateUserStep(chatId, 'sale_step_return', { ...tempData, qty });
+        return res.send('OK');
+      }
+
+      // === Крок: введення дати повернення ===
+      if (callbackData === 'sale_return_yes' && userStep === 'sale_step_return') {
+        await editMessage(chatId, messageId, `
+      **Можливість повернення: Так**
+
+      Введіть кінцеву дату повернення (наприклад, 15.11.2025):
+      `.trim(), {
+          reply_markup: { inline_keyboard: [[{ text: 'Скасувати', callback_data: 'sale_cancel' }]] }
+        });
+        await updateUserStep(chatId, 'sale_step_return_date', tempData);
+        return res.send('OK');
+      }
+
+      // === Крок: "Ні" → одразу підтвердження ===
+      if (callbackData === 'sale_return_no' && userStep === 'sale_step_return') {
+        const total = tempData.price * tempData.qty;
+
+        await editMessage(chatId, messageId, `
+      **Підтвердження продажу**
+
+      Товар: *${tempData.product}*  
+      Кількість: *${tempData.qty} шт*  
+      Ціна: *${tempData.price} грн*  
+      Сума: *${total} грн*  
+      Повернення: *Ні*
+
+      Підтвердити?
+      `.trim(), {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: 'Так, підтвердити', callback_data: 'sale_confirm' }],
+              [{ text: 'Змінити', callback_data: 'sale_cancel' }]
+            ]
+          }
+        });
+        await updateUserStep(chatId, 'sale_step_final_confirm', { ...tempData, returnOption: 'no' });
+        return res.send('OK');
+      }
+
+      // === Введення дати повернення (текст) ===
+      if (userStep === 'sale_step_return_date' && message?.text) {
+        const returnDate = message.text.trim();
+        const total = tempData.price * tempData.qty;
+
+        await editMessage(chatId, messageId, `
+      **Підтвердження продажу**
+
+      Товар: *${tempData.product}*  
+      Кількість: *${tempData.qty} шт*  
+      Ціна: *${tempData.price} грн*  
+      Сума: *${total} грн*  
+      Повернення: *Так, до ${returnDate}*
+
+      Підтвердити?
+      `.trim(), {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: 'Так, підтвердити', callback_data: 'sale_confirm' }],
+              [{ text: 'Змінити', callback_data: 'sale_cancel' }]
+            ]
+          }
+        });
+
+        await updateUserStep(chatId, 'sale_step_final_confirm', { ...tempData, returnOption: 'yes', returnDate });
+        return res.send('OK');
+      }
+
+
+      // === Фінальне підтвердження ===
+      if (callbackData === 'sale_confirm' && userStep === 'sale_step_final_confirm') {
+        const total = tempData.price * tempData.qty;
+        const returnText = tempData.returnOption === 'yes' ? `Так, до ${tempData.returnDate}` : 'Ні';
+
+        // Запис у Rest
+        await addToRest(
+          tempData.product,
+          -tempData.qty,
+          `Продаж: ${tempData.qty} × ${tempData.price} грн = ${total} грн | Повернення: ${returnText}`
+        );
+
+        // Запис у Log
+        await addToLog(
+          new Date().toISOString().split('T')[0],
+          'Продаж',
+          tempData.product,
+          tempData.qty,
+          tempData.price,
+          total,
+          tempData.returnOption === 'yes' ? tempData.returnDate : 'Ні'
+        );
+
+        await editMessage(chatId, messageId, `
+      **Продаж зареєстровано!**
+
+      *${tempData.product}*  
+      Кількість: *${tempData.qty} шт*  
+      Сума: *${total} грн*  
+      Повернення: *${returnText}*
+      `.trim(), { parse_mode: 'Markdown' });
+
+        await updateUserStep(chatId, '');
+        return res.send('OK');
+      }
+
+
+      if (callbackData === 'sale_cancel') {
+        await editMessage(chatId, messageId, 'Продаж скасовано.', {
+          reply_markup: { inline_keyboard: [] }
+        });
+        await updateUserStep(chatId, '');
+        return res.send('OK');
+      }
     }
 
     
@@ -274,8 +485,8 @@ app.post('/', async (req, res) => {
       console.log('УВІЙШЛИ В ПРОДАЖУ'); // ← ПЕРЕВІРКА
       if (!userStep) {
         const goods = await getColumn('Goods', 'A');
-        await showGoodsPage(chatId, goods, 0);
-        await updateUserStep(chatId, 'sale_step_1', { page: 0 });
+        const messageId = await showGoodsPage(chatId, null, goods, 0);
+        await updateUserStep(chatId, 'sale_step_1', { page: 0, messageId });
       }
     }
 
