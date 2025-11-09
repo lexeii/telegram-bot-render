@@ -54,6 +54,31 @@ async function getLogCount() {
   }
 }
 
+async function sendMessage(chatId, text, options = {}) {
+  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown', ...options })
+  });
+}
+
+async function editMessage(chatId, messageId, text, options = {}) {
+  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, message_id: messageId, text, parse_mode: 'Markdown', ...options })
+  });
+}
+
+async function getPricesForProduct(product) {
+  const rest = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: 'Rest!A:B'
+  });
+  const rows = rest.data.values || [];
+  return [...new Set(rows.filter(r => r[0] === product).map(r => r[1]))].sort((a,b) => a-b);
+}
+
 // === Webhook ===
 app.get('/', (req, res) => res.send('Webhook ready.'));
 
