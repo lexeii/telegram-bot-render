@@ -393,6 +393,8 @@ app.post('/', async (req, res) => {
 
         const total = tempData.price * qty;
 
+        await updateUserStep(chatId, 'sale_step_confirm', { ...tempData, qty, total });
+
         await editMessage(chatId, messageId, `
       **Подтвердите продажу**
 
@@ -406,14 +408,13 @@ app.post('/', async (req, res) => {
           reply_markup: {
             inline_keyboard: [
               [
-                { text: 'Да, всё верно', callback_data: 'sale_confirm' },
+                { text: 'Да',       callback_data: 'sale_confirm' },
                 { text: 'Изменить', callback_data: 'sale_cancel' }
               ]
             ]
           }
         });
 
-        await updateUserStep(chatId, 'sale_step_confirm', { ...tempData, qty, total });
         return res.send('OK');
       }
 
