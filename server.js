@@ -483,10 +483,10 @@ app.post('/', async (req, res) => {
 
         // If "today" selected - remove custom date
         if (selectedDate === formatDate(new Date())) {
-          await updateUser(chatId, { customSaleDate: null });
+          await updateUserStep(chatId, { customSaleDate: null });
           await sendMessage(chatId, `Дата продажи: *сегодня*`, { parse_mode: 'Markdown' });
         } else {
-          await updateUser(chatId, { customSaleDate: selectedDate });
+          await updateUserStep(chatId, { customSaleDate: selectedDate });
           await sendMessage(chatId, `Дата продажи: *${selectedDate}*`, { parse_mode: 'Markdown' });
         }
 
@@ -570,7 +570,7 @@ app.post('/', async (req, res) => {
       }
 
       const formatted = `${d.padStart(2, '0')}.${m.padStart(2, '0')}.${y}`;
-      await updateUser(chatId, { customSaleDate: formatted });
+      await updateUserStep(chatId, { customSaleDate: formatted });
       await sendMessage(chatId, `Дата: *${formatted}*`, { parse_mode: 'Markdown' });
       await updateMainMenu(chatId);
       await updateUserStep(chatId, '');
