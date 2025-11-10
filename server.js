@@ -181,8 +181,8 @@ async function getMainMenuKeyboard(chatId) {
   return {
     reply_markup: {
       keyboard: [
-        ['Продажа', 'Приход', 'Списание'],
-        ['Уценка', 'Возврат', dateText]
+        ['🧾Продажа', '📥Приход',  '📤Списание'],
+        ['📉Уценка',  '💸Возврат', dateText]
       ],
       resize_keyboard: true
     }
@@ -231,12 +231,12 @@ async function logAction(user, action, details) {
     requestBody: {
       values: [[
         new Date().toLocaleString('uk-UA'),
-        user[1] || user[0],
+        user[1]          || user[0],
         action,
-        details.product || '',
-        details.price || '',
+        details.product  || '',
+        details.price    || '',
         details.quantity || '',
-        details.comment || ''
+        details.comment  || ''
       ]]
     }
   });
@@ -319,7 +319,7 @@ app.post('/', async (req, res) => {
 
     const user = await getUser(chatId);
     if (!user || user[3] !== 'Active') {
-      await sendMessage(chatId, 'Доступ запрещён.');
+      await sendMessage(chatId, '🚫 Доступ запрещён.');
       return res.send('OK');
     }
 
@@ -334,7 +334,8 @@ app.post('/', async (req, res) => {
       // Pagination of goods
       if (callbackData.startsWith('sale_page_') && userStep === 'sale_step_1') {
         const page = Number(callbackData.replace('sale_page_', ''));
-        const goods = await getColumn('Goods', 'A');
+        const sheetName = await getSetting('ART_SHEET_NAME') || 'Goods';
+        const goods = await getColumn(sheetName, 'A');
         await showGoodsPage(chatId, tempData.messageId, goods, page);
         await updateUserStep(chatId, 'sale_step_1', { ...tempData, page });
         return res.send('OK');
@@ -450,7 +451,7 @@ app.post('/', async (req, res) => {
       Сумма: *${total} ₴*  
       Дата: *${saleDate}*
 
-      Спасибо!
+      ❤️Спасибо!
       `.trim(), keyboard);
 
         await updateUserStep(chatId, '');
@@ -466,7 +467,7 @@ app.post('/', async (req, res) => {
         return res.send('OK');
       }
 
-      
+
       // === Select any date (including today) ===
       if (callbackData?.startsWith('set_date_')) {
         const selectedDate = callbackData.replace('set_date_', '');
@@ -495,14 +496,14 @@ app.post('/', async (req, res) => {
         await updateUserStep(chatId, 'awaiting_custom_date', {});
         return res.send('OK');
       }
-      
+
     }
 
-    
+
     // === THEN text (Продажа, /start etc.) ===
-    
+
     // === /start ===
-    
+
     if (text === '/start') {
       const startMsg = await getSetting('START_MSG') || 'Добро пожаловать!';
       const keyboard = await getMainMenuKeyboard(chatId);
@@ -514,17 +515,18 @@ app.post('/', async (req, res) => {
 
 
     // === Продажа ===
-    
-    if (text === 'Продажа' || userStep.startsWith('sale_')) {
+
+    if (text === '🧾Продажа' || userStep.startsWith('sale_')) {
       console.log('УВІЙШЛИ В ПРОДАЖУ'); // ← ПЕРЕВІРКА
       if (!userStep) {
-        const goods = await getColumn('Goods', 'A');
+        const sheetName = await getSetting('ART_SHEET_NAME') || 'Goods';
+        const goods = await getColumn(sheetName, 'A');
         const messageId = await showGoodsPage(chatId, null, goods, 0);  // Отримуємо ID
         await updateUserStep(chatId, 'sale_step_1', { page: 0, messageId });  // Зберігаємо ID
       }
     }
 
-    // === Натиснута кнопка дати (з Calendar або Back) ===
+    // === Натиснута кнопка дати (з 🗓️ або 🔙) ===
     if (text.includes('🗓️') || text.includes('🔙')) {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
@@ -549,7 +551,7 @@ app.post('/', async (req, res) => {
       return res.send('OK');
     }
 
-    
+
     if (userStep === 'awaiting_custom_date' && message?.text) {
       const input = message.text.trim();
       const regex = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/;
@@ -574,7 +576,7 @@ app.post('/', async (req, res) => {
       return res.send('OK');
     }
 
-    
+
     res.send('OK');
   } catch (err) {
     console.error('КРАШ В WEBHOOK:', err);
