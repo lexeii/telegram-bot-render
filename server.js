@@ -23,22 +23,37 @@ const sheets = google.sheets({ version: 'v4', auth });
 // === SEND MESSAGE ===
 
 async function sendMessage(chatId, text, options = {}) {
-  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown', ...options })
   });
+  return res;
 }
 
 
 // === EDIT MESSAGE ===
 
 async function editMessage(chatId, messageId, text, options = {}) {
-  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: chatId, message_id: messageId, text, parse_mode: 'Markdown', ...options })
   });
+  return res
+}
+
+
+// === GET SETTING ===
+
+async function getSetting(key) {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: 'Settings!A:C'
+  });
+  const rows = res.data.values || [];
+  const row = rows.find(r => r[0] === key);
+  return row ? row[1] : null;
 }
 
 
@@ -85,16 +100,7 @@ async function showGoodsPage(chatId, messageId, goods, page) {
   if (messageId) {
     await editMessage(chatId, messageId, text, { reply_markup: { inline_keyboard: keyboard } });
   } else {
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: keyboard }
-      })
-    });
+    const res = await sendMessage(chatId, text, { reply_markup: { inline_keyboard: keyboard } });
     const json = await res.json();
     return json.result.message_id;
   }
@@ -155,18 +161,38 @@ async function addToRest(product, qty, note) {
 
 // === ADD TO LOG ===
 
-async function addToLog(date, type, product, qty, price, total) {
+async function addToLog(date, type, product, qty, price, total, newprice = '') {
   try {
     const sheetName = await getSetting('LOG_SHEET_NAME') || 'Log';
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${sheetName}!A:F`,  // A:Дата, B:Тип, C:Товар, D:Кол-во, E:Цена, F:Сумма
+      range: `${sheetName}!A:G`,  // A:Дата, B:Тип, C:Товар, D:Кол-во, E:Цена, F:Сумма, G: Новая цена
       valueInputOption: 'RAW',
-      requestBody: { values: [[date, type, product, qty, price, total]] }
+      requestBody: { values: [[date, type, product, qty, price, total, newprice]] }
     });
   } catch (err) {
     console.error('Log error:', err);
   }
+}
+
+
+// === FORMAT DATE ===
+
+function formatDate(date) {
+  return date.toLocaleDateString('uk-UA');  // 09.11.2025
+}
+
+
+// === GET USER DATA ===
+
+async function getUser(chatId) {
+  const sheetName = await getSetting('USERS_SHEET_NAME') || 'Users';
+  const users = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${sheetName}!A:H`
+  });
+  const rows = users.data.values || [];
+  return rows.find(r => r[0] == chatId);
 }
 
 
@@ -190,13 +216,6 @@ async function getMainMenuKeyboard(chatId) {
 }
 
 
-// === FORMAT DATE ===
-
-function formatDate(date) {
-  return date.toLocaleDateString('uk-UA');  // 09.11.2025
-}
-
-
 // === GET SALE DATE ===
 
 async function getSaleDate(chatId) {
@@ -205,53 +224,6 @@ async function getSaleDate(chatId) {
     return user.customSaleDate;
   }
   return formatDate(new Date());
-}
-
-
-// === GET USER DATA ===
-
-async function getUser(chatId) {
-  const sheetName = await getSetting('USERS_SHEET_NAME') || 'Users';
-  const users = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${sheetName}!A:H`
-  });
-  const rows = users.data.values || [];
-  return rows.find(r => r[0] == chatId);
-}
-
-// === LOG ACTION ===
-
-async function logAction(user, action, details) {
-  const logSheet = await getSetting('LOG_SHEET_NAME') || 'Log';
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${logSheet}!A:G`,
-    valueInputOption: 'RAW',
-    requestBody: {
-      values: [[
-        new Date().toLocaleString('uk-UA'),
-        user[1]          || user[0],
-        action,
-        details.product  || '',
-        details.price    || '',
-        details.quantity || '',
-        details.comment  || ''
-      ]]
-    }
-  });
-}
-
-// === GET SETTING ===
-
-async function getSetting(key) {
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: 'Settings!A:C'
-  });
-  const rows = res.data.values || [];
-  const row = rows.find(r => r[0] === key);
-  return row ? row[1] : null;
 }
 
 
