@@ -128,9 +128,7 @@ async function showPricesPage(chatId, messageId, product, prices, page = 0) {
   const totalPages = Math.ceil(prices.length / perPage);
   const text = `**Продажа: ${product}.** Цены ${page + 1}/${totalPages}:`;
 
-  await editMessage(chatId, messageId, text, {
-    reply_markup: { inline_keyboard: keyboard }
-  });
+  await editMessage(chatId, messageId, text, { reply_markup: { inline_keyboard: keyboard } });
 }
 
 
@@ -367,10 +365,14 @@ app.post('/', async (req, res) => {
         await editMessage(chatId, messageId, `**Продажа: ${tempData.product} ${price} ₴.** Количество:`, {
           reply_markup: {
             inline_keyboard: [
-              [{ text: '1', callback_data: `sale_qty_1` }],
-              [{ text: '2', callback_data: `sale_qty_2` }],
-              [{ text: '3', callback_data: `sale_qty_3` }],
-              [{ text: 'Другое…', callback_data: 'sale_qty_other' }]
+              [
+                { text: '1', callback_data: `sale_qty_1` },
+                { text: '2', callback_data: `sale_qty_2` }
+              ],
+              [
+                { text: '3', callback_data: `sale_qty_3` },
+                { text: 'Другое…', callback_data: 'sale_qty_other' }
+              ]
             ]
           }
         });
@@ -400,16 +402,15 @@ app.post('/', async (req, res) => {
 
       Товар: *${tempData.product}*  
       Цена: *${tempData.price} ₴*  
-      Количество: *${qty} шт*  
+      Количество: *${qty} шт.*  
 
       Всё верно?
       `.trim(), {
-          parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
               [
-                { text: 'Да',       callback_data: 'sale_confirm' },
-                { text: 'Изменить', callback_data: 'sale_cancel' }
+                { text: '✔️ Да',       callback_data: 'sale_confirm' },
+                { text: '❌ Изменить', callback_data: 'sale_cancel' }
               ]
             ]
           }
@@ -450,7 +451,7 @@ app.post('/', async (req, res) => {
       Дата: *${saleDate}*
 
       Спасибо!
-      `.trim(), { parse_mode: 'Markdown', ...keyboard });
+      `.trim(), keyboard);
 
         await updateUserStep(chatId, '');
         return res.send('OK');
@@ -481,7 +482,7 @@ app.post('/', async (req, res) => {
         }
 
         const keyboard = await getMainMenuKeyboard(chatId);
-        await sendMessage(chatId, text, { parse_mode: 'Markdown', ...keyboard });
+        await sendMessage(chatId, text, keyboard);
 
         return res.send('OK');
       }
@@ -505,7 +506,7 @@ app.post('/', async (req, res) => {
     if (text === '/start') {
       const startMsg = await getSetting('START_MSG') || 'Добро пожаловать!';
       const keyboard = await getMainMenuKeyboard(chatId);
-      await sendMessage(chatId, startMsg, { ...keyboard });
+      await sendMessage(chatId, startMsg, keyboard);
 
       await updateUserStep(chatId, '');
       return res.send('OK');
@@ -567,7 +568,7 @@ app.post('/', async (req, res) => {
       const formatted = `${d.padStart(2, '0')}.${m.padStart(2, '0')}.${y}`;
       await updateUserStep(chatId, { customSaleDate: formatted });
       const keyboard = await getMainMenuKeyboard(chatId);
-      await sendMessage(chatId, `Дата: *${formatted}*`, { parse_mode: 'Markdown', ...keyboard });
+      await sendMessage(chatId, `Дата: *${formatted}*`, keyboard);
 
       await updateUserStep(chatId, '');
       return res.send('OK');
