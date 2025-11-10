@@ -192,7 +192,18 @@ async function getUser(chatId) {
     range: `${sheetName}!A:H`
   });
   const rows = users.data.values || [];
-  return rows.find(r => r[0] == chatId);
+  const userRow = rows.find(r => r[0] == chatId);
+  if (!userRow) return null;
+
+  const user = [...userRow];
+  try {
+    user[4] = user[4] ? (typeof user[4] === 'string' ? JSON.parse(user[4]) : user[4]) : '';
+  } catch (e) { user[4] = user[4] || ''; }  // fallback на строку
+  try {
+    user[5] = user[5] ? JSON.parse(user[5]) : {};
+  } catch (e) { user[5] = {}; }
+
+  return user;
 }
 
 
@@ -220,10 +231,8 @@ async function getMainMenuKeyboard(chatId) {
 
 async function getSaleDate(chatId) {
   const user = await getUser(chatId);
-  if (user?.customSaleDate) {
-    return user.customSaleDate;
-  }
-  return formatDate(new Date());
+  const step = user[4];  // может быть объектом
+  return step?.customSaleDate || formatDate(new Date());
 }
 
 
@@ -245,19 +254,19 @@ async function updateUserStep(chatId, step, tempData = {}) {
 
   const users = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${sheetName}!A:F`
+    range: `${sheetName}!A:H`
   });
   const rows = users.data.values || [];
   const rowIndex = rows.findIndex(r => r[0] == chatId);
   if (rowIndex === -1) return false;
 
   const newRow = [...rows[rowIndex]];
-  newRow[4] = step;
+  newRow[4] = typeof step === 'object' ? JSON.stringify(step) : step;
   newRow[5] = JSON.stringify(tempData);
 
   await sheets.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${sheetName}!A${rowIndex + 1}:F${rowIndex + 1}`,
+    range: `${sheetName}!A${rowIndex + 1}:H${rowIndex + 1}`,
     valueInputOption: 'RAW',
     requestBody: { values: [newRow] }
   });
