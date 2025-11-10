@@ -196,12 +196,20 @@ async function getUser(chatId) {
   if (!userRow) return null;
 
   const user = [...userRow];
+
   try {
-    user[4] = user[4] ? (typeof user[4] === 'string' ? JSON.parse(user[4]) : user[4]) : '';
-  } catch (e) { user[4] = user[4] || ''; }  // fallback на строку
+    user[4] = user[4] ? JSON.parse(user[4]) : '';
+  } catch (e) {
+    console.warn(`Invalid JSON in step for user ${chatId}:`, user[4]);
+    user[4] = user[4] || '';
+  }
+
   try {
     user[5] = user[5] ? JSON.parse(user[5]) : {};
-  } catch (e) { user[5] = {}; }
+  } catch (e) {
+    console.warn(`Invalid JSON in tempData for user ${chatId}:`, user[5]);
+    user[5] = {};
+  }
 
   return user;
 }
@@ -560,8 +568,8 @@ app.post('/', async (req, res) => {
 
     res.send('OK');
   } catch (err) {
-    console.error('КРАШ В WEBHOOK:', err);
-    res.status(500).send('Error');  // Замість 'OK' — щоб Telegram знав про проблему
+    console.error('WEBHOOK CRASH:', err);
+    res.status(200).send('OK');
   }
 });
 
