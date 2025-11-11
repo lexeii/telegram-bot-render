@@ -287,6 +287,17 @@ function safeParse(str) {
 }
 
 
+// === ANSWER CALLBACK QUERY ===
+
+async function answerCallbackQuery(callbackQueryId, text = '') {
+  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ callback_query_id: callbackQueryId, text })
+  });
+}
+
+
 // === Webhook ===
 
 app.get('/', (req, res) => res.send('Webhook ready.'));
@@ -395,17 +406,16 @@ app.post('/', async (req, res) => {
         await editMessage(chatId, messageId, `
       **Подтвердите продажу**
 
-      Товар: *${tempData.product}*  
-      Цена: *${tempData.price} ₴*  
-      Количество: *${qty} шт.*  
+      *${tempData.product}* по *${tempData.price} ₴*  
+      *${qty} шт.*  
 
       Всё верно?
       `.trim(), {
           reply_markup: {
             inline_keyboard: [
               [
-                { text: '✔️ Да',       callback_data: 'sale_confirm' },
-                { text: '❌ Изменить', callback_data: 'sale_cancel' }
+                { text: '✔️ Да',     callback_data: 'sale_confirm' },
+                { text: '❌ Отмена', callback_data: 'sale_cancel' }
               ]
             ]
           }
@@ -420,13 +430,6 @@ app.post('/', async (req, res) => {
         const total = tempData.price * tempData.qty;
         const saleDate = await getSaleDate(chatId);  // ← Get date
 
-        // Write to Rest sheet
-        await addToRest(
-          tempData.product,
-          -tempData.qty,
-          `Продажа: ${tempData.qty} × ${tempData.price} ₴ = ${total} ₴`
-        );
-
         await addToLog(
           saleDate,
           'Продажа',
@@ -436,11 +439,14 @@ app.post('/', async (req, res) => {
           total
         );
 
+        await answerCallbackQuery(callbackQueryId, 'Продажа подтверждена!');
+
         const keyboard = await getMainMenuKeyboard(chatId); // Refresh date button
-        await editMessage(chatId, messageId, `
-      **Продажа введена!**
+        await editMessage(chatId, tempData.messageId, `
+      **Продажа введена!** ✅
 
       *${tempData.product}*  
+      Цена: *${tempData.price} ₴*  
       Количество: *${tempData.qty} шт.*  
       Сумма: *${total} ₴*  
       Дата: *${saleDate}*
