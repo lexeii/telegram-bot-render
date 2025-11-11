@@ -187,31 +187,40 @@ function formatDate(date) {
 
 async function getUser(chatId) {
   const sheetName = await getSetting('USERS_SHEET_NAME') || 'Users';
-  const users = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${sheetName}!A:H`
-  });
-  const rows = users.data.values || [];
-  const userRow = rows.find(r => r[0] == chatId);
-  if (!userRow) return null;
-
-  const user = [...userRow];
-
   try {
-    user[4] = user[4] ? JSON.parse(user[4]) : '';
-  } catch (e) {
-    console.warn(`Invalid JSON in step for user ${chatId}:`, user[4]);
-    user[4] = user[4] || '';
-  }
+    const users = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${sheetName}!A:H`
+    });
+    const rows = users.data.values || [];
+    const userRow = rows.find(r => r[0] == chatId);
+    if (!userRow) return null;
 
-  try {
-    user[5] = user[5] ? JSON.parse(user[5]) : {};
-  } catch (e) {
-    console.warn(`Invalid JSON in tempData for user ${chatId}:`, user[5]);
-    user[5] = {};
-  }
+    const user = [...userRow];
 
-  return user;
+    user[4] = (() => {
+      try {
+        return user[4] ? JSON.parse(user[4]) : '';
+      } catch (e) {
+        console.warn(`[getUser] Invalid step for ${chatId}:`, user[4]);
+        return user[4] || '';
+      }
+    })();
+
+    user[5] = (() => {
+      try {
+        return user[5] ? JSON.parse(user[5]) : {};
+      } catch (e) {
+        console.warn(`[getUser] Invalid tempData for ${chatId}:`, user[5]);
+        return {};
+      }
+    })();
+
+    return user;
+  } catch (error) {
+    console.error(`[getUser] Fatal error for ${chatId}:`, error);
+    return null;
+  }
 }
 
 
@@ -495,10 +504,16 @@ app.post('/', async (req, res) => {
 
     if (text === '/start') {
       const startMsg = await getSetting('START_MSG') || 'Добро пожаловать!';
+      await updateUserStep(chatId, '');
+
+      const user = await getUser(chatId);
+      if (!user) {
+        await sendMessage(chatId, 'Ошибка: не удалось загрузить данные пользователя.');
+        return res.send('OK');
+      }
+
       const keyboard = await getMainMenuKeyboard(chatId);
       await sendMessage(chatId, startMsg, keyboard);
-
-      await updateUserStep(chatId, '');
       return res.send('OK');
     }
 
