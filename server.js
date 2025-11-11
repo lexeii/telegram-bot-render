@@ -114,7 +114,7 @@ async function getSettings() {
 
 // === GET PRICES FOR PRODUCT ===
 
-async function getPricesForProduct(product) {
+async function getPricesForProduct(settings, product) {
   const rows = await getRange(settings.restSheet, 'A:B');
   return [...new Set(rows.filter(r => r[0] === product).map(r => r[1]))].sort((a, b) => a - b);
 }
@@ -190,7 +190,7 @@ async function showPricesPage(chatId, messageId, product, prices, page = 0) {
 
 // === ADD TO LOG ===
 
-async function addToLog(date, type, product, qty, price, total, newprice = '') {
+async function addToLog(settings, date, type, product, qty, price, total, newprice = '') {
   try {
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
@@ -213,9 +213,9 @@ function formatDate(date) {
 
 // === GET USER DATA ===
 
-async function getUser(chatId, sheet) {
+async function getUser(settings, chatId) {
   try {
-    const rows = await getRange(sheet, 'A:H');
+    const rows = await getRange(settings.usersSheet, 'A:H');
     const row = rows.find(r => r[0] == chatId);
     if (!row) return null;
 
@@ -231,11 +231,8 @@ async function getUser(chatId, sheet) {
 
 // === UPDATE MAIN MENU ===
 
-async function getMainMenuKeyboard(chatId) {
-  const user = await getUser(chatId, settings.usersSheet);
-  const customDate = user[6];
-  const isToday = !customDate || customDate === today;
-  const dateText = isToday ? `🗓️${today}` : `🔙${customDate}`;
+async function getMainMenuKeyboard(saleDate, today) {
+  const dateText = (saleDate === today) ? `🗓️${today}` : `🔙${saleDate}`;
 
   return {
     reply_markup: {
@@ -249,17 +246,9 @@ async function getMainMenuKeyboard(chatId) {
 }
 
 
-// === GET SALE DATE ===
-
-async function getSaleDate(chatId, today) {
-  const user = await getUser(chatId, settings.usersSheet);
-  return user[6] || today;
-}
-
-
 // === Refreshing step & temp_data ===
 
-async function updateUserStep(chatId, step = '', tempData = {}, saleDate = '') {
+async function updateUserStep(settings, chatId, step = '', tempData = {}, saleDate = '') {
   const rows = await getRange(settings.usersSheet, 'A:H');
   const rowIndex = rows.findIndex(r => r[0] == chatId);
   if (rowIndex === -1) return false;
@@ -309,7 +298,7 @@ app.post('/', async (req, res) => {
 
     const settings = await getSettings();
 
-    const user = await getUser(chatId, settings.usersSheet);
+    const user = await getUser(settings, chatId);
     if (!user || user[3] !== 'Active') {
       await sendMessage(chatId, '🚫 Доступ запрещён.');
       return res.send('OK');
@@ -341,25 +330,25 @@ app.post('/', async (req, res) => {
         const page = Number(callbackData.replace('sale_page_', ''));
         const goods = await getColumn(settings.goodsSheet, 'A');
         await showGoodsPage(chatId, tempData.messageId, goods, page);
-        await updateUserStep(chatId, 'sale_step_1', { ...tempData, page });
+        await updateUserStep(settings, chatId, 'sale_step_1', { ...tempData, page });
         return res.send('OK');
       }
 
       // Goods select
       if (callbackData.startsWith('sale_product_') && userStep === 'sale_step_1') {
         const product = callbackData.replace('sale_product_', '');
-        const prices = await getPricesForProduct(product);
+        const prices = await getPricesForProduct(settings, product);
         await showPricesPage(chatId, messageId, product, prices, 0);
-        await updateUserStep(chatId, 'sale_step_2', { product, pricePage: 0 });
+        await updateUserStep(settings, chatId, 'sale_step_2', { product, pricePage: 0 });
         return res.send('OK');
       }
 
       // Pagination of prices
       if (callbackData.startsWith('price_page_') && userStep === 'sale_step_2') {
         const page = Number(callbackData.replace('price_page_', ''));
-        const prices = await getPricesForProduct(tempData.product);
+        const prices = await getPricesForProduct(settings, tempData.product);
         await showPricesPage(chatId, messageId, tempData.product, prices, page);
-        await updateUserStep(chatId, 'sale_step_2', { ...tempData, pricePage: page });
+        await updateUserStep(settings, chatId, 'sale_step_2', { ...tempData, pricePage: page });
         return res.send('OK');
       }
 
@@ -380,7 +369,7 @@ app.post('/', async (req, res) => {
             ]
           }
         });
-        await updateUserStep(chatId, 'sale_step_3', { ...tempData, price });
+        await updateUserStep(settings, chatId, 'sale_step_3', { ...tempData, price });
         return res.send('OK');
       }
 
@@ -391,7 +380,7 @@ app.post('/', async (req, res) => {
           await editMessage(chatId, messageId, `**Продажа: ${tempData.product} ${tempData.price} ₴.**\n\nВведите количество:`, {
             reply_markup: { inline_keyboard: [[{ text: 'Отмена', callback_data: 'sale_cancel' }]] }
           });
-          await updateUserStep(chatId, 'sale_step_qty_input', { ...tempData });
+          await updateUserStep(settings, chatId, 'sale_step_qty_input', { ...tempData });
           return res.send('OK');
         } else {
           qty = Number(callbackData.replace('sale_qty_', ''));
@@ -399,7 +388,7 @@ app.post('/', async (req, res) => {
 
         const total = tempData.price * qty;
 
-        await updateUserStep(chatId, 'sale_step_confirm', { ...tempData, qty, total });
+        await updateUserStep(settings, chatId, 'sale_step_confirm', { ...tempData, qty, total });
 
         await editMessage(chatId, messageId, `
 **Подтвердите продажу**
@@ -426,20 +415,13 @@ app.post('/', async (req, res) => {
       // === Final confirmation ===
       if (callbackData === 'sale_confirm' && userStep === 'sale_step_confirm') {
         const total = tempData.price * tempData.qty;
-        const saleDate = await getSaleDate(chatId, today);  // ← Get date
+        // const saleDate = await getSaleDate(settings, chatId, today);  // ← Get date
 
-        await addToLog(
-          saleDate,
-          'Продажа',
-          tempData.product,
-          tempData.qty,
-          tempData.price,
-          total
-        );
+        await addToLog(settings, saleDate, 'Продажа', tempData.product, tempData.qty, tempData.price, total);
 
         await answerCallbackQuery(callbackQueryId, '✅ Продажа записана!');
 
-        const keyboard = await getMainMenuKeyboard(chatId); // Refresh date button
+        const keyboard = await getMainMenuKeyboard(saleDate, today);  // Refresh date button
         console.log('[DEBUG] messageId', messageId);
         await editMessage(chatId, messageId, `
 **Продажа записана!**
@@ -451,7 +433,7 @@ app.post('/', async (req, res) => {
 Дата: *${saleDate}*
       `.trim(), keyboard);
 
-        await updateUserStep(chatId);
+        await updateUserStep(settings, chatId);  // reset
         return res.send('OK');
       }
 
@@ -460,7 +442,7 @@ app.post('/', async (req, res) => {
         await editMessage(chatId, messageId, 'Продажа отменена.', {
           reply_markup: { inline_keyboard: [] }
         });
-        await updateUserStep(chatId);
+        await updateUserStep(settings, chatId);  // reset
         return res.send('OK');
       }
 
@@ -474,17 +456,17 @@ app.post('/', async (req, res) => {
           await editMessage(chatId, messageId, 'Введите дату: ДД.ММ.ГГГГ', {
             reply_markup: { inline_keyboard: [[{ text: 'Отмена', callback_data: 'sale_cancel' }]] }
           });
-          await updateUserStep(chatId, 'awaiting_custom_date');
+          await updateUserStep(settings, chatId, 'awaiting_custom_date');
           return res.send('OK');
         } else if (selectedDate === today) {
-          await updateUserStep(chatId, '', {}, 'today');
+          await updateUserStep(settings, chatId, '', {}, 'today');
           text = `Дата: *сегодня*`;
         } else {
-          await updateUserStep(chatId, '', {}, selectedDate);
+          await updateUserStep(settings, chatId, '', {}, selectedDate);
           text = `Дата: *${selectedDate}*`;
         }
 
-        const keyboard = await getMainMenuKeyboard(chatId);
+        const keyboard = await getMainMenuKeyboard(saleDate, today);
         await editMessage(chatId, messageId, text, keyboard);
 
         return res.send('OK');
@@ -504,17 +486,8 @@ app.post('/', async (req, res) => {
       console.log('[DEBUG] userStep:', JSON.stringify(userStep, null, 2));
       console.log('[DEBUG] tempData:', JSON.stringify(tempData, null, 2));
 
-      // const user = await getUser(chatId, settings.usersSheet);
-      // if (!user) {
-      //   await sendMessage(chatId, 'Ошибка: пользователь не найден.');
-      //   return res.send('OK');
-      // }
-
-      // const step = user[4];
-      // const tempData = user[5];
-
-      await updateUserStep(chatId);
-      const keyboard = await getMainMenuKeyboard(chatId);
+      await updateUserStep(settings, chatId);  // reset
+      const keyboard = await getMainMenuKeyboard(saleDate, today);
       await sendMessage(chatId, settings.startMsg, keyboard);
       return res.send('OK');
     }
@@ -527,8 +500,8 @@ app.post('/', async (req, res) => {
       if (!userStep) {
         const goods = await getColumn(settings.goodsSheet, 'A');
 
-        const messageId = await showGoodsPage(chatId, null, goods, 0);        // get ID
-        await updateUserStep(chatId, 'sale_step_1', { page: 0, messageId });  // save it once
+        const messageId = await showGoodsPage(chatId, null, goods, 0);                  // get ID
+        await updateUserStep(settings, chatId, 'sale_step_1', { page: 0, messageId });  // save it once
       }
     }
 
@@ -579,8 +552,8 @@ app.post('/', async (req, res) => {
       }
 
       const formatted = date.toLocaleDateString('uk-UA');  // 09.11.2025
-      await updateUserStep(chatId, '', {}, formatted);
-      const keyboard = await getMainMenuKeyboard(chatId);
+      await updateUserStep(settings, chatId, '', {}, formatted);
+      const keyboard = await getMainMenuKeyboard(saleDate, today);
       await sendMessage(chatId, `Дата: *${formatted}*`, keyboard);
 
       return res.send('OK');
