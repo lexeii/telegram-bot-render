@@ -56,28 +56,65 @@ async function answerCallbackQuery(callbackQueryId, text = '') {
 }
 
 
-// === GET SETTING ===
+// === GET RANGE from Google table ===
 
-async function getSetting(key) {
+async function getRange(sheet, range) {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: 'Settings!A:C'
+    range: `${sheet}!${range}`
   });
-  const rows = res.data.values || [];
-  const row = rows.find(r => r[0] === key);
-  return row ? row[1] : null;
+  return res.data.values || [];
+}
+
+
+// === GET COLUMN ===
+
+async function getColumn(sheet, col) {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${sheet}!${col}:${col}`
+  });
+  return res.data.values ? res.data.values.flat() : [];
+}
+
+
+// === GET SETTINGS ===
+
+async function getSettings() {
+  const defaults = {
+    startMsg: 'Добро пожаловать!',
+    logSheet: 'Log',
+    restSheet: 'Rest',
+    goodsSheet: 'Goods',
+    usersSheet: 'Users'
+  };
+
+  try {
+    const rows = await getRange('Settings', 'A:B');
+    const settings = { ...defaults };  // start with defaults
+
+    // Skip first line (titles)
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      const key = row[0]?.trim();
+      const value = row[1]?.trim();
+
+      if (key && value) settings[key] = value;
+    }
+
+    return settings;
+
+  } catch (err) {
+    console.error('Error reading Settings sheet:', err.message);
+    return { ...defaults };
+  }
 }
 
 
 // === GET PRICES FOR PRODUCT ===
 
 async function getPricesForProduct(product) {
-  const sheetName = await getSetting('REST_SHEET_NAME') || 'Rest';
-  const rest = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${sheetName}!A:B`
-  });
-  const rows = rest.data.values || [];
+  const rows = await getRange(settings.restSheet, 'A:B');
   return [...new Set(rows.filter(r => r[0] === product).map(r => r[1]))].sort((a, b) => a - b);
 }
 
@@ -154,10 +191,9 @@ async function showPricesPage(chatId, messageId, product, prices, page = 0) {
 
 async function addToLog(date, type, product, qty, price, total, newprice = '') {
   try {
-    const sheetName = await getSetting('LOG_SHEET_NAME') || 'Log';
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${sheetName}!A:G`,  // A:Дата, B:Тип, C:Товар, D:Кол-во, E:Цена, F:Сумма, G: Новая цена
+      range: `${settings.logSheet}!A:G`,  // A:Дата, B:Тип, C:Товар, D:Кол-во, E:Цена, F:Сумма, G: Новая цена
       valueInputOption: 'RAW',
       requestBody: { values: [[date, type, product, qty, price, total, newprice]] }
     });
@@ -177,13 +213,8 @@ function formatDate(date) {
 // === GET USER DATA ===
 
 async function getUser(chatId) {
-  const sheetName = await getSetting('USERS_SHEET_NAME') || 'Users';
   try {
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${sheetName}!A:H`
-    });
-    const rows = res.data.values || [];
+    const rows = await getRange(settings.usersSheet, 'A:H');
     const row = rows.find(r => r[0] == chatId);
     if (!row) return null;
 
@@ -200,10 +231,10 @@ async function getUser(chatId) {
 // === UPDATE MAIN MENU ===
 
 async function getMainMenuKeyboard(chatId) {
-  const today = formatDate(new Date()); // FIXME
   const user = await getUser(chatId);
-  const isToday = !user[6] || user[6] === today;
-  const dateText = isToday ? `🗓️${today}` : `🔙${user.customSaleDate}`;
+  const customDate = user[6];
+  const isToday = !customDate || customDate === today;
+  const dateText = isToday ? `🗓️${today}` : `🔙${customDate}`;
 
   return {
     reply_markup: {
@@ -225,27 +256,10 @@ async function getSaleDate(chatId) {
 }
 
 
-// === GET COLUMN ===
-
-async function getColumn(sheet, col) {
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${sheet}!${col}:${col}`
-  });
-  return res.data.values ? res.data.values.flat() : [];
-}
-
-
 // === Refreshing step & temp_data ===
 
 async function updateUserStep(chatId, step = '', tempData = {}, saleDate = '') {
-  const sheetName = await getSetting('USERS_SHEET_NAME') || 'Users';
-
-  const users = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${sheetName}!A:H`
-  });
-  const rows = users.data.values || [];
+  const rows = await getRange(settings.usersSheet, 'A:H');
   const rowIndex = rows.findIndex(r => r[0] == chatId);
   if (rowIndex === -1) return false;
 
@@ -260,7 +274,7 @@ async function updateUserStep(chatId, step = '', tempData = {}, saleDate = '') {
 
   await sheets.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${sheetName}!A${rowIndex + 1}:H${rowIndex + 1}`,
+    range: `${settings.usersSheet}!A${rowIndex + 1}:H${rowIndex + 1}`,
     valueInputOption: 'RAW',
     requestBody: { values: [newRow] }
   });
@@ -278,11 +292,11 @@ app.get('/', (req, res) => res.send('Webhook ready.'));
 app.post('/', async (req, res) => {
   try {
     const data = req.body;
-    console.log('GOT:', JSON.stringify(data, null, 2)); // ← DEBUG
+    console.log('GOT:', JSON.stringify(data, null, 2)); // DEBUG
 
     const message = data.message || data.callback_query?.message;
     if (!message) {
-      console.log('No message - ignore');
+      console.log('No message - ignore'); // DEBUG
       return res.send('OK');
     }
 
@@ -290,7 +304,7 @@ app.post('/', async (req, res) => {
     const text = message.text || data.callback_query?.data;
     const messageId = message.message_id;
 
-    console.log(`User ${chatId} sent: "${text}"`);
+    console.log(`User ${chatId} sent: "${text}"`); // DEBUG
 
     const user = await getUser(chatId);
 
@@ -299,16 +313,19 @@ app.post('/', async (req, res) => {
       return res.send('OK');
     }
 
-    const userStep = user[4] || '';
-    const tempData = user[5] ? JSON.parse(user[5]) : {};
-
-    // get userDate
-    let userDate = formatDate(new Date()); // fallback
+    let today = formatDate(new Date()); // fallback
     if (message.date) {
-      userDate = formatDate(new Date(
+      today = formatDate(new Date(
         new Date(message.date * 1000).toLocaleString('uk-UA', { timeZone: 'Europe/Kiev' })
       ));
     }
+
+    const userStep = user[4] || '';
+    const tempData = user[5] ? JSON.parse(user[5]) : {};
+    const saleDate = user[6] || today;
+
+    const settings = await getSettings();
+
 
     // === PROCESSING CALLBACK_QUERY (FIRST) ===
     if (data.callback_query) {
@@ -322,8 +339,7 @@ app.post('/', async (req, res) => {
       // Pagination of goods
       if (callbackData.startsWith('sale_page_') && userStep === 'sale_step_1') {
         const page = Number(callbackData.replace('sale_page_', ''));
-        const sheetName = await getSetting('ART_SHEET_NAME') || 'Goods';
-        const goods = await getColumn(sheetName, 'A');
+        const goods = await getColumn(settings.goodsSheet, 'A');
         await showGoodsPage(chatId, tempData.messageId, goods, page);
         await updateUserStep(chatId, 'sale_step_1', { ...tempData, page });
         return res.send('OK');
@@ -386,12 +402,12 @@ app.post('/', async (req, res) => {
         await updateUserStep(chatId, 'sale_step_confirm', { ...tempData, qty, total });
 
         await editMessage(chatId, messageId, `
-      **Подтвердите продажу**
+**Подтвердите продажу**
 
-      *${tempData.product}* по *${tempData.price} ₴*  
-      *${qty} шт.*  
+*${tempData.product}* по *${tempData.price} ₴*  
+*${qty} шт.*  
 
-      Всё верно?
+Всё верно?
       `.trim(), {
           reply_markup: {
             inline_keyboard: [
@@ -421,20 +437,18 @@ app.post('/', async (req, res) => {
           total
         );
 
-        await answerCallbackQuery(callbackQueryId, '✅ Продажа подтверждена!');
+        await answerCallbackQuery(callbackQueryId, '✅ Продажа записана!');
 
         const keyboard = await getMainMenuKeyboard(chatId); // Refresh date button
         console.log('[DEBUG] messageId', messageId);
         await editMessage(chatId, messageId, `
-**Продажа введена!**
+**Продажа записана!**
 
 *${tempData.product}*  
 Цена: *${tempData.price} ₴*  
 Количество: *${tempData.qty} шт.*  
 Сумма: *${total} ₴*  
 Дата: *${saleDate}*
-
-❤️Спасибо!
       `.trim(), keyboard);
 
         await updateUserStep(chatId);
@@ -454,7 +468,6 @@ app.post('/', async (req, res) => {
       // === Select any date (including today) ===
       if (callbackData?.startsWith('set_date_')) {
         const selectedDate = callbackData.replace('set_date_', '');
-        const today = formatDate(new Date()); // FIXME
 
         let text;
         if (selectedDate === 'other') {
@@ -497,8 +510,7 @@ app.post('/', async (req, res) => {
 
       await updateUserStep(chatId);
       const keyboard = await getMainMenuKeyboard(chatId);
-      const startMsg = await getSetting('START_MSG') || 'Добро пожаловать!';
-      await sendMessage(chatId, startMsg, keyboard);
+      await sendMessage(chatId, settings.startMsg, keyboard);
       return res.send('OK');
     }
 
@@ -506,34 +518,37 @@ app.post('/', async (req, res) => {
     // === Продажа ===
 
     if (text === '🧾Продажа' || userStep.startsWith('sale_')) {
-      console.log('УВІЙШЛИ В ПРОДАЖУ'); // ← ПЕРЕВІРКА
+      console.log(`ENTERING ${text}`); // DEBUG
       if (!userStep) {
-        const sheetName = await getSetting('ART_SHEET_NAME') || 'Goods';
-        const goods = await getColumn(sheetName, 'A');
-        const messageId = await showGoodsPage(chatId, null, goods, 0);  // Отримуємо ID
-        await updateUserStep(chatId, 'sale_step_1', { page: 0, messageId });  // Зберігаємо ID
+        const goods = await getColumn(settings.goodsSheet, 'A');
+
+        const messageId = await showGoodsPage(chatId, null, goods, 0);        // get ID
+        await updateUserStep(chatId, 'sale_step_1', { page: 0, messageId });  // save it once
       }
     }
 
     // === Натиснута кнопка дати (з 🗓️ або 🔙) ===
     if (text.includes('🗓️') || text.includes('🔙')) {
-      const yesterday = new Date(); // FIXME
-      yesterday.setDate(yesterday.getDate() - 1);
+      // 09.11.2025 → 2025-11-09 = valid date string
+      const todayDate = new Date(today.split('.').reverse().join('-'));
 
-      const dayBefore = new Date(); // FIXME
-      dayBefore.setDate(dayBefore.getDate() - 2);
+      const yesterdayDate = new Date(todayDate);
+      yesterdayDate.setDate(todayDate.getDate() - 1);
+      const yesterday = formatDate(yesterdayDate);
 
-      const today = formatDate(new Date()); // FIXME
+      const dayBeforeDate = new Date(todayDate);
+      dayBeforeDate.setDate(todayDate.getDate() - 2);
+      const dayBefore = formatDate(dayBeforeDate);
 
       await sendMessage(chatId, 'Выберите дату операции:', {
         reply_markup: {
           inline_keyboard: [
             [
-              { text: formatDate(dayBefore), callback_data: `set_date_${formatDate(dayBefore)}` },
-              { text: formatDate(yesterday), callback_data: `set_date_${formatDate(yesterday)}` }
+              { text: dayBefore, callback_data: `set_date_${dayBefore}` },
+              { text: yesterday, callback_data: `set_date_${yesterday}` }
             ],
             [
-              { text: 'Сегодня', callback_data: `set_date_${today}` },
+              { text: 'Сегодня', callback_data: 'set_date_today' },
               { text: 'Другая…', callback_data: 'set_date_other' }
             ]
           ]
