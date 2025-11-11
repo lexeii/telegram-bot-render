@@ -188,44 +188,19 @@ function formatDate(date) {
 async function getUser(chatId) {
   const sheetName = await getSetting('USERS_SHEET_NAME') || 'Users';
   try {
-    const users = await sheets.spreadsheets.values.get({
+    const res = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
       range: `${sheetName}!A:H`
     });
-    const rows = users.data.values || [];
-    const userRow = rows.find(r => r[0] == chatId);
-    if (!userRow) return null;
+    const rows = res.data.values || [];
+    const row = rows.find(r => r[0] == chatId);
+    if (!row) return null;
 
-    const user = [...userRow];
+    console.log(`[DEBUG getUser] Raw row for ${chatId}:`, JSON.stringify(row));
 
-    user[4] = (raw => {
-      if (!raw) return '';
-      if (typeof raw === 'object') return raw; // ← если { customSaleDate: ... }
-      if (typeof raw !== 'string') return raw || '';
-      try {
-        const parsed = JSON.parse(raw);
-        return typeof parsed === 'object' ? parsed : raw;
-      } catch (e) {
-        console.warn(`[getUser] Invalid step JSON for ${chatId}:`, raw);
-        return raw;
-      }
-    })(user[4]);
-
-    user[5] = (raw => {
-      if (!raw) return {};
-      if (typeof raw === 'object') return {}; // ← если уже объект
-      if (typeof raw !== 'string') return {};
-      try {
-        return JSON.parse(raw);
-      } catch (e) {
-        console.warn(`[getUser] Invalid tempData JSON for ${chatId}:`, raw);
-        return {};
-      }
-    })(user[5]);
-
-    return user;
-  } catch (error) {
-    console.error(`[getUser] Fatal error for ${chatId}:`, error);
+    return row;
+  } catch (err) {
+    console.error(`[getUser] Error reading sheet:`, err.message);
     return null;
   }
 }
@@ -285,7 +260,8 @@ async function updateUserStep(chatId, step, tempData = {}) {
   if (rowIndex === -1) return false;
 
   const newRow = [...rows[rowIndex]];
-  newRow[4] = typeof step === 'object' ? JSON.stringify(step) : step;
+
+  newRow[4] = typeof step === 'object' ? JSON.stringify(step) : (step || '');
   newRow[5] = JSON.stringify(tempData);
 
   await sheets.spreadsheets.values.update({
@@ -295,6 +271,19 @@ async function updateUserStep(chatId, step, tempData = {}) {
     requestBody: { values: [newRow] }
   });
   return true;
+}
+
+
+// === SAFE PARSE ===
+
+function safeParse(str) {
+  if (!str || typeof str !== 'string') return str;
+  try {
+    return JSON.parse(str);
+  } catch (e) {
+    console.warn(`[safeParse] Invalid JSON:`, str);
+    return {};
+  }
 }
 
 
@@ -510,17 +499,21 @@ app.post('/', async (req, res) => {
     // === /start ===
 
     if (text === '/start') {
-      const startMsg = await getSetting('START_MSG') || 'Добро пожаловать!';
-
       const user = await getUser(chatId);
       if (!user) {
-        await sendMessage(chatId, 'Ошибка: не удалось загрузить данные пользователя.');
+        await sendMessage(chatId, 'Ошибка: пользователь не найден.');
         return res.send('OK');
       }
 
-      await updateUserStep(chatId, '', {});
+      console.log(`[DEBUG /start] user[4] (step):`, user[4]);
+      console.log(`[DEBUG /start] user[5] (temp):`, user[5]);
 
+      const tempData = user[5] ? safeParse(user[5]) : {};
+      const step = user[4] && user[4] !== '{}' ? safeParse(user[4]) : '';
+
+      await updateUserStep(chatId, '', {});
       const keyboard = await getMainMenuKeyboard(chatId);
+      const startMsg = await getSetting('START_MSG') || 'Добро пожаловать!';
       await sendMessage(chatId, startMsg, keyboard);
       return res.send('OK');
     }
