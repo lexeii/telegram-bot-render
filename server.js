@@ -138,27 +138,6 @@ async function showPricesPage(chatId, messageId, product, prices, page = 0) {
 }
 
 
-// === ADD TO REST ===
-
-async function addToRest(product, qty, note) {
-  try {
-    const sheetName = await getSetting('REST_SHEET_NAME') || 'Rest';
-    const res = await sheets.spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${sheetName}!A:H`,  // Add row with date, type, comment
-      valueInputOption: 'RAW',
-      insertDataOption: 'INSERT_ROWS',
-      requestBody: {
-        values: [[new Date().toLocaleDateString('uk-UA'), 'Продажа', product, qty, note, '', '', '']]
-      }
-    });
-    console.log('Записано в лист Rest');
-  } catch (err) {
-    console.error('Ошибка на листе Rest:', err);
-  }
-}
-
-
 // === ADD TO LOG ===
 
 async function addToLog(date, type, product, qty, price, total, newprice = '') {
@@ -331,10 +310,15 @@ app.post('/', async (req, res) => {
     const userStep = user[4] || '';
     const tempData = user[5] ? JSON.parse(user[5]) : {};
 
+
     // === PROCESSING CALLBACK_QUERY (FIRST) ===
-    if (data.callback_query) {
-      const callbackData = data.callback_query.data;
-      const messageId = data.callback_query.message.message_id;
+    if (update.callback_query) {
+      const callbackQuery = update.callback_query;
+      const callbackQueryId = callbackQuery.id;
+      const chatId = callbackQuery.message.chat.id;
+      const messageId = callbackQuery.message.message_id;
+      const callbackData = callbackQuery.data;
+
 
       // Pagination of goods
       if (callbackData.startsWith('sale_page_') && userStep === 'sale_step_1') {
@@ -346,7 +330,6 @@ app.post('/', async (req, res) => {
         return res.send('OK');
       }
 
-      
       // Goods select
       if (callbackData.startsWith('sale_product_') && userStep === 'sale_step_1') {
         const product = callbackData.replace('sale_product_', '');
@@ -414,7 +397,7 @@ app.post('/', async (req, res) => {
           reply_markup: {
             inline_keyboard: [
               [
-                { text: '✔️ Да',     callback_data: 'sale_confirm' },
+                { text: '✅ Да',     callback_data: 'sale_confirm' },
                 { text: '❌ Отмена', callback_data: 'sale_cancel' }
               ]
             ]
@@ -443,7 +426,7 @@ app.post('/', async (req, res) => {
 
         const keyboard = await getMainMenuKeyboard(chatId); // Refresh date button
         await editMessage(chatId, tempData.messageId, `
-      **Продажа введена!** ✅
+      **Продажа введена!**
 
       *${tempData.product}*  
       Цена: *${tempData.price} ₴*  
