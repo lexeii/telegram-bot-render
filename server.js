@@ -306,8 +306,9 @@ app.post('/', async (req, res) => {
 
     console.log(`User ${chatId} sent: "${text}"`); // DEBUG
 
-    const user = await getUser(chatId);
+    const settings = await getSettings();
 
+    const user = await getUser(chatId);
     if (!user || user[3] !== 'Active') {
       await sendMessage(chatId, '🚫 Доступ запрещён.');
       return res.send('OK');
@@ -323,8 +324,6 @@ app.post('/', async (req, res) => {
     const userStep = user[4] || '';
     const tempData = user[5] ? JSON.parse(user[5]) : {};
     const saleDate = user[6] || today;
-
-    const settings = await getSettings();
 
 
     // === PROCESSING CALLBACK_QUERY (FIRST) ===
