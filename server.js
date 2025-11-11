@@ -23,36 +23,51 @@ const sheets = google.sheets({ version: 'v4', auth });
 // === SEND MESSAGE ===
 
 async function sendMessage(chatId, text, options = {}) {
-  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown', ...options })
-  });
-  return res;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown', ...options })
+    });
+    return res;
+  } catch (err) {
+    console.error('sendMessage() error:', err.message);
+    return null;
+  }
 }
 
 
 // === EDIT MESSAGE ===
 
 async function editMessage(chatId, messageId, text, options = {}) {
-  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, message_id: messageId, text, parse_mode: 'Markdown', ...options })
-  });
-  return res
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, message_id: messageId, text, parse_mode: 'Markdown', ...options })
+    });
+    return res;
+  } catch (err) {
+    console.error('editMessage() error:', err.message);
+    return null;
+  }
 }
 
 
 // === ANSWER CALLBACK QUERY ===
 
 async function answerCallbackQuery(callbackQueryId, text = '') {
-  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ callback_query_id: callbackQueryId, text })
-  });
-  return res
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ callback_query_id: callbackQueryId, text })
+    });
+    return res;
+  } catch (err) {
+    console.error('answerCallbackQuery() error:', err.message);
+    return null;
+  }
 }
 
 
