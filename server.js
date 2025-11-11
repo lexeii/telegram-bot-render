@@ -198,23 +198,30 @@ async function getUser(chatId) {
 
     const user = [...userRow];
 
-    user[4] = (() => {
+    user[4] = (raw => {
+      if (!raw) return '';
+      if (typeof raw === 'object') return raw; // ← если { customSaleDate: ... }
+      if (typeof raw !== 'string') return raw || '';
       try {
-        return user[4] ? JSON.parse(user[4]) : '';
+        const parsed = JSON.parse(raw);
+        return typeof parsed === 'object' ? parsed : raw;
       } catch (e) {
-        console.warn(`[getUser] Invalid step for ${chatId}:`, user[4]);
-        return user[4] || '';
+        console.warn(`[getUser] Invalid step JSON for ${chatId}:`, raw);
+        return raw;
       }
-    })();
+    })(user[4]);
 
-    user[5] = (() => {
+    user[5] = (raw => {
+      if (!raw) return {};
+      if (typeof raw === 'object') return {}; // ← если уже объект
+      if (typeof raw !== 'string') return {};
       try {
-        return user[5] ? JSON.parse(user[5]) : {};
+        return JSON.parse(raw);
       } catch (e) {
-        console.warn(`[getUser] Invalid tempData for ${chatId}:`, user[5]);
+        console.warn(`[getUser] Invalid tempData JSON for ${chatId}:`, raw);
         return {};
       }
-    })();
+    })(user[5]);
 
     return user;
   } catch (error) {
@@ -504,13 +511,14 @@ app.post('/', async (req, res) => {
 
     if (text === '/start') {
       const startMsg = await getSetting('START_MSG') || 'Добро пожаловать!';
-      await updateUserStep(chatId, '');
 
       const user = await getUser(chatId);
       if (!user) {
         await sendMessage(chatId, 'Ошибка: не удалось загрузить данные пользователя.');
         return res.send('OK');
       }
+
+      await updateUserStep(chatId, '', {});
 
       const keyboard = await getMainMenuKeyboard(chatId);
       await sendMessage(chatId, startMsg, keyboard);
