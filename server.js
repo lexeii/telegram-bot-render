@@ -209,8 +209,7 @@ async function getMainMenuKeyboard(chatId) {
 
 async function getSaleDate(chatId) {
   const user = await getUser(chatId);
-  const step = user[4];  // может быть объектом
-  return step?.customSaleDate || formatDate(new Date());
+  return user[6] || formatDate(new Date());
 }
 
 
@@ -227,7 +226,7 @@ async function getColumn(sheet, col) {
 
 // === Refreshing step & temp_data ===
 
-async function updateUserStep(chatId, step, tempData = {}) {
+async function updateUserStep(chatId, step, tempData = {}, saleDate = '') {
   const sheetName = await getSetting('USERS_SHEET_NAME') || 'Users';
 
   const users = await sheets.spreadsheets.values.get({
@@ -240,8 +239,9 @@ async function updateUserStep(chatId, step, tempData = {}) {
 
   const newRow = [...rows[rowIndex]];
 
-  newRow[4] = typeof step === 'object' ? JSON.stringify(step) : (step || '');
+  newRow[4] = step;
   newRow[5] = JSON.stringify(tempData);
+  newRow[6] = saleDate;
 
   await sheets.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
@@ -422,10 +422,10 @@ app.post('/', async (req, res) => {
           total
         );
 
-        await answerCallbackQuery(callbackQueryId, 'Продажа подтверждена!');
+        await answerCallbackQuery(callbackQueryId, '✅ Продажа подтверждена!');
 
         const keyboard = await getMainMenuKeyboard(chatId); // Refresh date button
-        await editMessage(chatId, tempData.messageId, `
+        await editMessage(chatId, messageId, `
       **Продажа введена!**
 
       *${tempData.product}*  
@@ -457,11 +457,17 @@ app.post('/', async (req, res) => {
         const today = formatDate(new Date());
 
         let text;
-        if (selectedDate === today) {
-          await updateUserStep(chatId, { customSaleDate: null });
+        if (selectedDate === 'other') {
+          await sendMessage(chatId, 'Введите дату: ДД.ММ.ГГГГ', {
+            reply_markup: { inline_keyboard: [[{ text: 'Отмена', callback_data: 'sale_cancel' }]] }
+          });
+          await updateUserStep(chatId, 'awaiting_custom_date', {}, '');
+          return res.send('OK');
+        } else if (selectedDate === today) {
+          await updateUserStep(chatId, '', {}, '');
           text = `Дата продажи: *сегодня*`;
         } else {
-          await updateUserStep(chatId, { customSaleDate: selectedDate });
+          await updateUserStep(chatId, '', {}, selectedDate);
           text = `Дата продажи: *${selectedDate}*`;
         }
 
@@ -471,14 +477,6 @@ app.post('/', async (req, res) => {
         return res.send('OK');
       }
 
-
-      if (callbackData === 'set_date_other') {
-        await sendMessage(chatId, 'Введите дату: ДД.ММ.ГГГГ', {
-          reply_markup: { inline_keyboard: [[{ text: 'Отмена', callback_data: 'sale_cancel' }]] }
-        });
-        await updateUserStep(chatId, 'awaiting_custom_date', {});
-        return res.send('OK');
-      }
 
     }
 
@@ -561,12 +559,11 @@ app.post('/', async (req, res) => {
         return res.send('OK');
       }
 
-      const formatted = `${d.padStart(2, '0')}.${m.padStart(2, '0')}.${y}`;
-      await updateUserStep(chatId, { customSaleDate: formatted });
+      const formatted = date.toLocaleDateString('uk-UA');  // 09.11.2025
+      await updateUserStep(chatId, '', {}, formatted);
       const keyboard = await getMainMenuKeyboard(chatId);
       await sendMessage(chatId, `Дата: *${formatted}*`, keyboard);
 
-      await updateUserStep(chatId, '');
       return res.send('OK');
     }
 
