@@ -307,6 +307,7 @@ app.post('/', async (req, res) => {
     console.log(`User ${chatId} sent: "${text}"`); // DEBUG
 
     const settings = await getSettings();
+    console.log('settings:', JSON.stringify(settings, null, 2)); // DEBUG
 
     const user = await getUser(chatId);
     if (!user || user[3] !== 'Active') {
