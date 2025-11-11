@@ -500,14 +500,18 @@ app.post('/', async (req, res) => {
 
     if (text === '/start') {
       console.log('[DEBUG] /start, settings:', JSON.stringify(settings, null, 2));
-      const user = await getUser(chatId, settings.usersSheet);
-      if (!user) {
-        await sendMessage(chatId, 'Ошибка: пользователь не найден.');
-        return res.send('OK');
-      }
+      console.log('[DEBUG] user:', JSON.stringify(user, null, 2));
+      console.log('[DEBUG] userStep:', JSON.stringify(userStep, null, 2));
+      console.log('[DEBUG] tempData:', JSON.stringify(tempData, null, 2));
 
-      const step = user[4];
-      const tempData = user[5];
+      // const user = await getUser(chatId, settings.usersSheet);
+      // if (!user) {
+      //   await sendMessage(chatId, 'Ошибка: пользователь не найден.');
+      //   return res.send('OK');
+      // }
+
+      // const step = user[4];
+      // const tempData = user[5];
 
       await updateUserStep(chatId);
       const keyboard = await getMainMenuKeyboard(chatId);
