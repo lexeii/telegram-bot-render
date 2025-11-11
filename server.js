@@ -312,8 +312,8 @@ app.post('/', async (req, res) => {
 
 
     // === PROCESSING CALLBACK_QUERY (FIRST) ===
-    if (update.callback_query) {
-      const callbackQuery = update.callback_query;
+    if (data.callback_query) {
+      const callbackQuery = data.callback_query;
       const callbackQueryId = callbackQuery.id;
       const chatId = callbackQuery.message.chat.id;
       const messageId = callbackQuery.message.message_id;
