@@ -81,6 +81,7 @@ async function getColumn(sheet, col) {
 // === GET SETTINGS ===
 
 async function getSettings() {
+  console.log('[DEBUG] getSettings started');
   const defaults = {
     startMsg: 'Добро пожаловать!',
     logSheet: 'Log',
@@ -212,7 +213,7 @@ function formatDate(date) {
 
 // === GET USER DATA ===
 
-async function getUser(chatId, settings) {
+async function getUser(chatId) {
   try {
     const rows = await getRange(settings.usersSheet, 'A:H');
     const row = rows.find(r => r[0] == chatId);
@@ -230,8 +231,8 @@ async function getUser(chatId, settings) {
 
 // === UPDATE MAIN MENU ===
 
-async function getMainMenuKeyboard(chatId, settings) {
-  const user = await getUser(chatId, settings);
+async function getMainMenuKeyboard(chatId) {
+  const user = await getUser(chatId);
   const customDate = user[6];
   const isToday = !customDate || customDate === today;
   const dateText = isToday ? `🗓️${today}` : `🔙${customDate}`;
@@ -250,8 +251,8 @@ async function getMainMenuKeyboard(chatId, settings) {
 
 // === GET SALE DATE ===
 
-async function getSaleDate(chatId, settings, today) {
-  const user = await getUser(chatId, settings);
+async function getSaleDate(chatId, today) {
+  const user = await getUser(chatId);
   return user[6] || today;
 }
 
@@ -308,7 +309,7 @@ app.post('/', async (req, res) => {
 
     const settings = await getSettings();
 
-    const user = await getUser(chatId, settings);
+    const user = await getUser(chatId);
     if (!user || user[3] !== 'Active') {
       await sendMessage(chatId, '🚫 Доступ запрещён.');
       return res.send('OK');
@@ -425,7 +426,7 @@ app.post('/', async (req, res) => {
       // === Final confirmation ===
       if (callbackData === 'sale_confirm' && userStep === 'sale_step_confirm') {
         const total = tempData.price * tempData.qty;
-        const saleDate = await getSaleDate(chatId, settings, today);  // ← Get date
+        const saleDate = await getSaleDate(chatId, today);  // ← Get date
 
         await addToLog(
           saleDate,
@@ -438,7 +439,7 @@ app.post('/', async (req, res) => {
 
         await answerCallbackQuery(callbackQueryId, '✅ Продажа записана!');
 
-        const keyboard = await getMainMenuKeyboard(chatId, settings); // Refresh date button
+        const keyboard = await getMainMenuKeyboard(chatId); // Refresh date button
         console.log('[DEBUG] messageId', messageId);
         await editMessage(chatId, messageId, `
 **Продажа записана!**
@@ -483,7 +484,7 @@ app.post('/', async (req, res) => {
           text = `Дата: *${selectedDate}*`;
         }
 
-        const keyboard = await getMainMenuKeyboard(chatId, settings);
+        const keyboard = await getMainMenuKeyboard(chatId);
         await editMessage(chatId, messageId, text, keyboard);
 
         return res.send('OK');
@@ -498,7 +499,8 @@ app.post('/', async (req, res) => {
     // === /start ===
 
     if (text === '/start') {
-      const user = await getUser(chatId, settings);
+      console.log('[DEBUG] /start, settings:', JSON.stringify(settings, null, 2));
+      const user = await getUser(chatId);
       if (!user) {
         await sendMessage(chatId, 'Ошибка: пользователь не найден.');
         return res.send('OK');
@@ -508,7 +510,7 @@ app.post('/', async (req, res) => {
       const tempData = user[5];
 
       await updateUserStep(chatId);
-      const keyboard = await getMainMenuKeyboard(chatId, settings);
+      const keyboard = await getMainMenuKeyboard(chatId);
       await sendMessage(chatId, settings.startMsg, keyboard);
       return res.send('OK');
     }
@@ -574,7 +576,7 @@ app.post('/', async (req, res) => {
 
       const formatted = date.toLocaleDateString('uk-UA');  // 09.11.2025
       await updateUserStep(chatId, '', {}, formatted);
-      const keyboard = await getMainMenuKeyboard(chatId, settings);
+      const keyboard = await getMainMenuKeyboard(chatId);
       await sendMessage(chatId, `Дата: *${formatted}*`, keyboard);
 
       return res.send('OK');
