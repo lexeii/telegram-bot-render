@@ -213,9 +213,9 @@ function formatDate(date) {
 
 // === GET USER DATA ===
 
-async function getUser(chatId) {
+async function getUser(chatId, sheet) {
   try {
-    const rows = await getRange(settings.usersSheet, 'A:H');
+    const rows = await getRange(sheet, 'A:H');
     const row = rows.find(r => r[0] == chatId);
     if (!row) return null;
 
@@ -232,7 +232,7 @@ async function getUser(chatId) {
 // === UPDATE MAIN MENU ===
 
 async function getMainMenuKeyboard(chatId) {
-  const user = await getUser(chatId);
+  const user = await getUser(chatId, settings.usersSheet);
   const customDate = user[6];
   const isToday = !customDate || customDate === today;
   const dateText = isToday ? `🗓️${today}` : `🔙${customDate}`;
@@ -252,7 +252,7 @@ async function getMainMenuKeyboard(chatId) {
 // === GET SALE DATE ===
 
 async function getSaleDate(chatId, today) {
-  const user = await getUser(chatId);
+  const user = await getUser(chatId, settings.usersSheet);
   return user[6] || today;
 }
 
@@ -309,7 +309,7 @@ app.post('/', async (req, res) => {
 
     const settings = await getSettings();
 
-    const user = await getUser(chatId);
+    const user = await getUser(chatId, settings.usersSheet);
     if (!user || user[3] !== 'Active') {
       await sendMessage(chatId, '🚫 Доступ запрещён.');
       return res.send('OK');
@@ -500,7 +500,7 @@ app.post('/', async (req, res) => {
 
     if (text === '/start') {
       console.log('[DEBUG] /start, settings:', JSON.stringify(settings, null, 2));
-      const user = await getUser(chatId);
+      const user = await getUser(chatId, settings.usersSheet);
       if (!user) {
         await sendMessage(chatId, 'Ошибка: пользователь не найден.');
         return res.send('OK');
