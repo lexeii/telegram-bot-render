@@ -200,7 +200,7 @@ async function getUser(chatId) {
 // === UPDATE MAIN MENU ===
 
 async function getMainMenuKeyboard(chatId) {
-  const today = formatDate(new Date());
+  const today = formatDate(new Date()); // FIXME
   const user = await getUser(chatId);
   const isToday = !user[6] || user[6] === today;
   const dateText = isToday ? `🗓️${today}` : `🔙${user.customSaleDate}`;
@@ -221,7 +221,7 @@ async function getMainMenuKeyboard(chatId) {
 
 async function getSaleDate(chatId) {
   const user = await getUser(chatId);
-  return user[6] || formatDate(new Date());
+  return user[6] || formatDate(new Date()); // FIXME
 }
 
 
@@ -238,7 +238,7 @@ async function getColumn(sheet, col) {
 
 // === Refreshing step & temp_data ===
 
-async function updateUserStep(chatId, step, tempData = {}, saleDate = '') {
+async function updateUserStep(chatId, step = '', tempData = {}, saleDate = '') {
   const sheetName = await getSetting('USERS_SHEET_NAME') || 'Users';
 
   const users = await sheets.spreadsheets.values.get({
@@ -253,7 +253,10 @@ async function updateUserStep(chatId, step, tempData = {}, saleDate = '') {
 
   newRow[4] = step;
   newRow[5] = JSON.stringify(tempData);
-  if (saleDate) newRow[6] = saleDate;
+  if (saleDate === 'today')
+    newRow[6] = '';  // remove date if 'today'
+  else if (saleDate)
+    newRow[6] = saleDate;  // set new if set, otherwise don't change
 
   await sheets.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
@@ -287,9 +290,10 @@ app.post('/', async (req, res) => {
     const text = message.text || data.callback_query?.data;
     const messageId = message.message_id;
 
-    console.log(`Користувач ${chatId} надіслав: "${text}"`);
+    console.log(`User ${chatId} sent: "${text}"`);
 
     const user = await getUser(chatId);
+
     if (!user || user[3] !== 'Active') {
       await sendMessage(chatId, '🚫 Доступ запрещён.');
       return res.send('OK');
@@ -298,6 +302,13 @@ app.post('/', async (req, res) => {
     const userStep = user[4] || '';
     const tempData = user[5] ? JSON.parse(user[5]) : {};
 
+    // get userDate
+    let userDate = formatDate(new Date()); // fallback
+    if (message.date) {
+      userDate = formatDate(new Date(
+        new Date(message.date * 1000).toLocaleString('uk-UA', { timeZone: 'Europe/Kiev' })
+      ));
+    }
 
     // === PROCESSING CALLBACK_QUERY (FIRST) ===
     if (data.callback_query) {
@@ -426,7 +437,7 @@ app.post('/', async (req, res) => {
 ❤️Спасибо!
       `.trim(), keyboard);
 
-        await updateUserStep(chatId, '');
+        await updateUserStep(chatId);
         return res.send('OK');
       }
 
@@ -435,7 +446,7 @@ app.post('/', async (req, res) => {
         await editMessage(chatId, messageId, 'Продажа отменена.', {
           reply_markup: { inline_keyboard: [] }
         });
-        await updateUserStep(chatId, '');
+        await updateUserStep(chatId);
         return res.send('OK');
       }
 
@@ -443,17 +454,17 @@ app.post('/', async (req, res) => {
       // === Select any date (including today) ===
       if (callbackData?.startsWith('set_date_')) {
         const selectedDate = callbackData.replace('set_date_', '');
-        const today = formatDate(new Date());
+        const today = formatDate(new Date()); // FIXME
 
         let text;
         if (selectedDate === 'other') {
           await editMessage(chatId, messageId, 'Введите дату: ДД.ММ.ГГГГ', {
             reply_markup: { inline_keyboard: [[{ text: 'Отмена', callback_data: 'sale_cancel' }]] }
           });
-          await updateUserStep(chatId, 'awaiting_custom_date', {}, '');
+          await updateUserStep(chatId, 'awaiting_custom_date');
           return res.send('OK');
         } else if (selectedDate === today) {
-          await updateUserStep(chatId, '', {}, '');
+          await updateUserStep(chatId, '', {}, 'today');
           text = `Дата: *сегодня*`;
         } else {
           await updateUserStep(chatId, '', {}, selectedDate);
@@ -484,7 +495,7 @@ app.post('/', async (req, res) => {
       const step = user[4];
       const tempData = user[5];
 
-      await updateUserStep(chatId, '', {});
+      await updateUserStep(chatId);
       const keyboard = await getMainMenuKeyboard(chatId);
       const startMsg = await getSetting('START_MSG') || 'Добро пожаловать!';
       await sendMessage(chatId, startMsg, keyboard);
@@ -506,11 +517,13 @@ app.post('/', async (req, res) => {
 
     // === Натиснута кнопка дати (з 🗓️ або 🔙) ===
     if (text.includes('🗓️') || text.includes('🔙')) {
-      const yesterday = new Date();
+      const yesterday = new Date(); // FIXME
       yesterday.setDate(yesterday.getDate() - 1);
-      const dayBefore = new Date();
+
+      const dayBefore = new Date(); // FIXME
       dayBefore.setDate(dayBefore.getDate() - 2);
-      const today = formatDate(new Date());
+
+      const today = formatDate(new Date()); // FIXME
 
       await sendMessage(chatId, 'Выберите дату операции:', {
         reply_markup: {
