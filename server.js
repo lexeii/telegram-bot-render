@@ -1,4 +1,4 @@
-require('dotenv').config({ quiet: true });
+// require('dotenv').config({ quiet: true });
 const express = require('express');
 const { google } = require('googleapis');
 const app = express();
