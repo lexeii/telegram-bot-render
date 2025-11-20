@@ -1,10 +1,12 @@
+require('dotenv').config({ quiet: true });
 const express = require('express');
 const { google } = require('googleapis');
 const app = express();
 app.use(express.json());
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const SPREADSHEET_ID = process.env.SPREADSHEET_ID
+const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
+const REST_GID = process.env.REST_GID;
 
 let auth;
 try {
@@ -20,89 +22,46 @@ try {
 const sheets = google.sheets({ version: 'v4', auth });
 
 
-// === SEND MESSAGE ===
+const OPS = {
+  sale:     {op:'Продажа',    prompt:'Подтвердите продажу:',    saved:'Продажа сохранена',    cancelled:'Продажа отменена'    },
+  income:   {op:'Приход',     prompt:'Подтвердите приход:',     saved:'Приход сохранён',      cancelled:'Приход отменён'      },
+  outcome:  {op:'Списание',   prompt:'Подтвердите списание:',   saved:'Списание сохранено',   cancelled:'Списание отменено'   },
+  discount: {op:'Переоценка', prompt:'Подтвердите переоценку:', saved:'Переоценка сохранена', cancelled:'Переоценка отменена' },
+  return:   {op:'Возврат',    prompt:'Подтвердите возврат:',    saved:'Возврат сохранён',     cancelled:'Возврат отменён'     },
+  report:   {op:'Отчёт'}
+};
+const REV  = Object.fromEntries(Object.entries(OPS).map(([key, data]) => [data.op, key]));
+const WORD = { report: 'Отчёт', shoppy: 'Продавец', date: 'Дата', today: 'Сегодня' };
+const ICO  = { today: '🗓️', day: '👀', seller: '🤵', new: '🆕', ok: '✅', cancel: '❌' };
 
-async function sendMessage(chatId, text, options = {}) {
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown', ...options })
-    });
-    return res;
-  } catch (err) {
-    console.error('sendMessage() error:', err.message);
-    return null;
-  }
+function subMsg(template, data) {
+  return template.replace(/\{(\w+)\}/g, (match, key) => data[key] ?? match);
 }
 
 
-// === EDIT MESSAGE ===
-
-async function editMessage(chatId, messageId, text, options = {}) {
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, message_id: messageId, text, parse_mode: 'Markdown', ...options })
-    });
-    return res;
-  } catch (err) {
-    console.error('editMessage() error:', err.message);
-    return null;
-  }
-}
-
-
-// === ANSWER CALLBACK QUERY ===
-
-async function answerCallbackQuery(callbackQueryId, text = '') {
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ callback_query_id: callbackQueryId, text })
-    });
-    return res;
-  } catch (err) {
-    console.error('answerCallbackQuery() error:', err.message);
-    return null;
-  }
-}
-
-
-// === GET RANGE from Google table ===
+// === GET RANGE (A:H) or column (A) from Google table ===
 
 async function getRange(sheet, range) {
+  const normalizedRange = range.includes(':') ? `${range}` : `${range}:${range}`;
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${sheet}!${range}`
+    range: `${sheet}!${normalizedRange}`
   });
-  return res.data.values || [];
+
+  const values = res.data.values || [];
+  return range.includes(':') ? values : values.flat();
 }
-
-
-// === GET COLUMN ===
-
-async function getColumn(sheet, col) {
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${sheet}!${col}:${col}`
-  });
-  return res.data.values ? res.data.values.flat() : [];
-}
-
 
 // === GET SETTINGS ===
 
 async function getSettings() {
-  console.log('[DEBUG] getSettings started');
   const defaults = {
     startMsg: 'Добро пожаловать!',
     logSheet: 'Log',
     restSheet: 'Rest',
     goodsSheet: 'Goods',
-    usersSheet: 'Users'
+    usersSheet: 'Users',
+    schedSheet: 'Sched'
   };
 
   try {
@@ -127,98 +86,6 @@ async function getSettings() {
 }
 
 
-// === GET PRICES FOR PRODUCT ===
-
-async function getPricesForProduct(settings, product) {
-  const rows = await getRange(settings.restSheet, 'A:B');
-  return [...new Set(rows.filter(r => r[0] === product).map(r => r[1]))].sort((a, b) => a - b);
-}
-
-
-// === SHOW GOODS PAGE ===
-
-async function showGoodsPage(chatId, messageId, goods, page) {
-  const perPage = 10;
-  const start = page * perPage;
-  const end = Math.min(start + perPage, goods.length);
-  const pageGoods = goods.slice(start, end);
-
-  // 2 columns
-  const keyboard = [];
-  for (let i = 0; i < pageGoods.length; i += 2) {
-    const row = [{ text: pageGoods[i], callback_data: `sale_product_${pageGoods[i]}` }];
-    if (i + 1 < pageGoods.length) {
-      row.push({ text: pageGoods[i + 1], callback_data: `sale_product_${pageGoods[i + 1]}` });
-    }
-    keyboard.push(row);
-  }
-
-  // Pagination
-  const nav = [];
-  if (page > 0) nav.push({ text: '◀ Назад', callback_data: `sale_page_${page - 1}` });
-  if (end < goods.length) nav.push({ text: 'Вперед ▶', callback_data: `sale_page_${page + 1}` });
-  if (nav.length) keyboard.push(nav);
-
-  const totalPages = Math.ceil(goods.length / perPage);
-  const text = `**Продажа.** Товары ${page + 1}/${totalPages}:`;
-
-  if (messageId) {
-    await editMessage(chatId, messageId, text, { reply_markup: { inline_keyboard: keyboard } });
-  } else {
-    const res = await sendMessage(chatId, text, { reply_markup: { inline_keyboard: keyboard } });
-    const json = await res.json();
-    return json.result.message_id;
-  }
-}
-
-
-// === SHOW PRICES PAGE ===
-
-async function showPricesPage(chatId, messageId, product, prices, page = 0) {
-  const perPage = 10;
-  const start = page * perPage;
-  const end = Math.min(start + perPage, prices.length);
-  const pagePrices = prices.slice(start, end);
-
-  // 2 columns
-  const keyboard = [];
-  for (let i = 0; i < pagePrices.length; i += 2) {
-    const row = [{ text: `${pagePrices[i]} ₴`, callback_data: `sale_price_${pagePrices[i]}` }];
-    if (i + 1 < pagePrices.length) {
-      row.push({ text: `${pagePrices[i + 1]} ₴`, callback_data: `sale_price_${pagePrices[i + 1]}` });
-    }
-    keyboard.push(row);
-  }
-
-  // Pagination
-  const nav = [];
-  if (page > 0) nav.push({ text: '◀ Назад', callback_data: `price_page_${page - 1}` });
-  if (end < prices.length) nav.push({ text: 'Вперед ▶', callback_data: `price_page_${page + 1}` });
-  if (nav.length) keyboard.push(nav);
-
-  const totalPages = Math.ceil(prices.length / perPage);
-  const text = `**Продажа: ${product}.** Цены ${page + 1}/${totalPages}:`;
-
-  await editMessage(chatId, messageId, text, { reply_markup: { inline_keyboard: keyboard } });
-}
-
-
-// === ADD TO LOG ===
-
-async function addToLog(settings, date, type, product, qty, price, total, newprice = '') {
-  try {
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${settings.logSheet}!A:G`,  // A:Дата, B:Тип, C:Товар, D:Кол-во, E:Цена, F:Сумма, G: Новая цена
-      valueInputOption: 'RAW',
-      requestBody: { values: [[date, type, product, qty, price, total, newprice]] }
-    });
-  } catch (err) {
-    console.error('Log error:', err);
-  }
-}
-
-
 // === FORMAT DATE ===
 
 function formatDate(date) {
@@ -226,64 +93,329 @@ function formatDate(date) {
 }
 
 
-// === GET USER DATA ===
-
-async function getUser(settings, chatId) {
-  try {
-    const rows = await getRange(settings.usersSheet, 'A:H');
-    const row = rows.find(r => r[0] == chatId);
-    if (!row) return null;
-
-    console.log(`[DEBUG getUser] Raw row for ${chatId}:`, JSON.stringify(row));
-
-    return row;
-  } catch (err) {
-    console.error(`[getUser] Error reading sheet:`, err.message);
-    return null;
+async function getSeller(sheet, date) {
+  const schedRows = await getRange(sheet, 'A:B');
+  let seller = WORD.shoppy[0];
+  for (const row of schedRows) {
+    if (row[0] === date) seller = row[1];
   }
+  return seller;
 }
 
 
 // === UPDATE MAIN MENU ===
 
-async function getMainMenuKeyboard(saleDate, today) {
-  const dateText = (saleDate === today) ? `🗓️${today}` : `🔙${saleDate}`;
-
+async function getMainMenuKeyboard(saleDate, today, schedSheet) {
+  const seller   = await getSeller(schedSheet, saleDate);
+  const dateText = (saleDate === today) ? `${ICO.today}${today}` : `${ICO.day}${saleDate}`;
   return {
     reply_markup: {
-      keyboard: [
-        ['🧾Продажа', '📥Приход',  '📤Списание'],
-        ['📉Уценка',  '💸Возврат', dateText]
-      ],
+      keyboard: [[OPS.sale.op,   OPS.income.op, OPS.outcome.op,           OPS.discount.op],
+                 [OPS.return.op, WORD.report,  `${ICO.seller} ${seller}`, dateText]],
       resize_keyboard: true
     }
   };
 }
 
 
-// === Refreshing step & temp_data ===
+// === GENERATE REPORT ===
 
-async function updateUserStep(settings, chatId, step = '', tempData = {}, saleDate = '') {
-  const rows = await getRange(settings.usersSheet, 'A:H');
-  const rowIndex = rows.findIndex(r => r[0] == chatId);
-  if (rowIndex === -1) return false;
+async function generateReport(openingBalance, targetDateStr, logSheet) {
+  const targetDate = targetDateStr.split('.').reverse().join('-');  // '17.11.2025' → '2025-11-17'
 
-  const newRow = [...rows[rowIndex]];
+  const rawRows = await getRange(logSheet, 'A:F');
+  const rows = rawRows.slice(1);  // skip header row
 
-  newRow[4] = step;
-  newRow[5] = JSON.stringify(tempData);
-  if (saleDate === 'today')
-    newRow[6] = '';  // remove date if 'today'
-  else if (saleDate)
-    newRow[6] = saleDate;  // set new if set, otherwise don't change
+  const prevOps = { sale: 0, return: 0, income: 0, outcome: 0, discount: 0 };
+  const dayOps  = { sale: {}, return: {}, income: {}, outcome: {}, discount: {} };
 
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${settings.usersSheet}!A${rowIndex + 1}:H${rowIndex + 1}`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [newRow] }
-  });
-  return true;
+  for (const row of rows) {
+    const opDate   = row[0]?.trim().split('.').reverse().join('-');
+    const type     = REV[row[1]?.trim()];
+    const product  = row[2]?.trim();
+    const qty      = parseInt(row[3]?.trim(), 10);
+    const price    = parseInt(row[4]?.trim(), 10);
+    const newPrice = parseInt(row[5]?.trim(), 10); // may be empty
+
+    const article = `${product}_${price}`; // for internal grouping
+    const amount = qty * price;
+
+    if (opDate < targetDate) { // prev date
+      if (type === 'discount') {
+        prevOps.discount += qty * (newPrice - price);
+      } else {
+        prevOps[type] += amount;
+      }
+
+    } else if (opDate === targetDate) { // report date
+      if (type !== 'discount') {
+        if (!dayOps[type][article]) dayOps[type][article] = { name: product, price, qty: 0 };
+        dayOps[type][article].qty += qty;
+      } else { // discount
+        const delta = qty * (newPrice - price);
+        const sign = delta >= 0 ? '+' : '';
+        const line = `${product} ${qty}×${price} → ${qty}×${newPrice} (${sign}${delta})`;
+        if (!dayOps.discount[article]) dayOps.discount[article] = [];
+        dayOps.discount[article].push(line);
+        dayOps[type].totalDelta = (dayOps[type].totalDelta || 0) + delta;
+      }
+    }
+  }
+
+  const startOfDayBalance = openingBalance - prevOps.sale + prevOps.return + prevOps.income - prevOps.outcome + prevOps.discount;
+  const dayTotals = { sale: 0, return: 0, income: 0, outcome: 0, discount: 0 };
+
+  for (const [type, items] of Object.entries(dayOps)) {
+    if (type === 'discount') {
+      dayTotals.discount = items.totalDelta ?? 0;
+    } else {
+      for (const item of Object.values(items)) {
+        dayTotals[type] += item.qty * item.price;
+      }
+    }
+  }
+
+  const endOfDayBalance = startOfDayBalance - dayTotals.sale + dayTotals.return + dayTotals.income - dayTotals.outcome + dayTotals.discount;
+
+  const lines = [];
+  lines.push(`<b>ОТЧЁТ за ${targetDateStr}</b>`);
+  lines.push('');
+
+  const order = ['sale', 'return', 'income', 'outcome', 'discount'];
+
+  for (const type of order) {
+    const items = dayOps[type];
+    const total = dayTotals[type] ?? 0;
+
+    if ((type === 'discount' && total === 0) || (type !== 'discount' && Object.keys(items).length === 0)) {
+      continue;
+    }
+
+    lines.push(`<b>${OPS[type].op}:</b>`);
+
+    if (type === 'discount') {
+      for (const arr of Object.values(items)) {
+        if (Array.isArray(arr)) {
+          for (const line of arr) {
+            lines.push(`🔹${line}`);
+          }
+        }
+      }
+    } else {
+      for (const item of Object.values(items)) {
+        lines.push(`🔸${item.name} ${item.qty}×${item.price}`);
+      }
+    }
+
+    if (type === 'discount') {
+      const sign = total >= 0 ? '+' : '';
+      lines.push(`Итого: <b>${sign}${total.toLocaleString('uk-UA')}</b> ₴`);
+    } else {
+      lines.push(`Итого: <b>${total.toLocaleString('uk-UA')}</b> ₴`);
+    }
+    lines.push('');
+  }
+
+  lines.push('<b>Остаток товаров:</b>');
+  lines.push(`💵 начало дня: <b>${startOfDayBalance.toLocaleString('uk-UA')}</b> ₴`);
+  lines.push(`💵 конец дня: &#8239;&#8239;<b>${endOfDayBalance.toLocaleString('uk-UA')}</b> ₴`); // &#8239;&#8239;
+  lines.push('');
+  lines.push(`🟢 <a href="https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/view?gid=${REST_GID}">Остатки</a>`);
+
+  return lines.join('\n');
+}
+
+
+// === BOT FACTORY ===
+
+function createBotHandlers(ctx) { // settings, chatId, messageId
+  return {
+    ctx,
+
+    async tg(method, body) {
+      try {
+        const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        return await res.json();
+      } catch (err) {
+        console.error(`${method}() error:`, err.message);
+        return null;
+      }
+    },
+
+    async sendMessage(text, options = {}) {
+      const res = await this.tg('sendMessage', { chat_id: this.ctx.chatId, text, parse_mode: 'HTML', ...options });
+      if (res.ok === false) console.log('[DEBUG] sendMessage res=', JSON.stringify(res));
+      return res.result.message_id;
+
+    },
+
+    async editMessage(text, options = {}) {
+      const res = await this.tg('editMessageText', { chat_id: this.ctx.chatId, message_id: this.ctx.messageId, text, parse_mode: 'HTML', ...options });
+      if (res.ok === false) console.log('[DEBUG] editMessage res=', JSON.stringify(res));
+      return res.result.message_id;
+    },
+
+    async editMessageRmButtons() {
+      const res = await this.tg('editMessageReplyMarkup', { chat_id: this.ctx.chatId, message_id: this.ctx.messageId, reply_markup: {} });
+      if (res.ok === false) console.log('[DEBUG] editMessageRmButtons res=', JSON.stringify(res));
+    },
+
+    async answerCallbackQuery(id, text = '') {
+      return await this.tg('answerCallbackQuery', { callback_query_id: id, text });
+    },
+
+
+    // === GET PRICES FOR PRODUCT ===
+
+    async getPricesForProduct(product) {
+      const rows = await getRange(this.ctx.settings.restSheet, 'A:B');
+      const prices = [...new Set(
+        rows
+          .filter(r => r[0] === product)
+          .map(r => r[1])
+      )].sort((a, b) => a - b);
+      return prices.map(price => [price, '']);
+    },
+
+
+    // === list pagination ===
+
+    paginate(list, perPage, page, label, operation) {
+      const start = page * perPage;
+      const end = Math.min(start + perPage, list.length);
+      const pageList = list.slice(start, end);
+
+      const columns = 3;
+      const keyboard = [];
+      for (let i = 0; i < pageList.length; i += columns) {
+        const [name1, emoji1] = pageList[i];
+        const item1 = { text: `${emoji1 ?? ''} ${name1}`,
+          callback_data: emoji1 === ICO.new ? `${label}_new` : `${label}_${name1}` };
+        const row = [item1];
+
+        if (i + 1 < pageList.length) {
+          const [name2, emoji2] = pageList[i + 1];
+          row.push({ text: `${emoji2 ?? ''} ${name2}`,
+            callback_data: emoji2 === ICO.new ? `${label}_new` : `${label}_${name2}` });
+        }
+
+        if (i + 2 < pageList.length) {
+          const [name3, emoji3] = pageList[i + 2];
+          row.push({ text: `${emoji3 ?? ''} ${name3}`,
+            callback_data: emoji3 === ICO.new ? `${label}_new` : `${label}_${name3}` });
+        }
+
+        keyboard.push(row);
+      }
+
+      // Navigation
+      const nav = [];
+      if (page > 0) nav.push({ text: '◀ Назад', callback_data: `page_${page - 1}` });
+      if (end < list.length) nav.push({ text: 'Вперед ▶', callback_data: `page_${page + 1}` });
+      if (nav.length) keyboard.push(nav);
+
+      return { reply_markup: { inline_keyboard: keyboard } };
+    },
+
+
+    // === SHOW GOODS PAGE ===
+
+    async showGoodsPage(goods, page, opLabel, operation) {
+      const perPage = 15;
+      if (operation === 'income') goods.push(['Новый товар…', ICO.new]);
+      const keyboard = this.paginate(goods, perPage, page, 'product', operation);
+      const totalPages = Math.ceil(goods.length / perPage);
+      const text = `<b>${opLabel}.</b> Товары ${page + 1}/${totalPages}:`;
+
+      if (this.ctx.messageId) {
+        await this.editMessage(text, keyboard);
+      } else {
+        return await this.sendMessage(text, keyboard); // → messageId
+      }
+    },
+
+
+    // === SHOW PRICES PAGE ===
+
+    async showPricesPage(product, prices, page, opLabel, operation) {
+      const perPage = 15;
+      if (operation === 'income') prices.push(['Новая цена…', ICO.new]);
+      const keyboard = this.paginate(prices, perPage, page, 'price', operation);
+      const totalPages = Math.ceil(prices.length / perPage);
+      const text = `<b>${opLabel}: ${product}.</b> Цены${ totalPages > 1 ? ` ${page + 1}/${totalPages}` : ''}:`;
+      await this.editMessage(text, keyboard);
+    },
+
+
+    // === ADD TO LOG ===
+
+    async addToLog(date, type, product, qty, price, priceNew = '') {
+      try {
+        article = `${product}_${price}`;
+        articleNew = priceNew ? `${product}_${priceNew}` : '';
+        await sheets.spreadsheets.values.append({
+          spreadsheetId: SPREADSHEET_ID,
+          range: `${this.ctx.settings.logSheet}!A:F`,  // A:Дата, B:Тип, C:Товар, D:Цена, E:Кол-во, F:Новая цена, G: Артикул, H: Новый артикул
+          valueInputOption: 'RAW',
+          requestBody: { values: [[date, type, product, qty, price, priceNew, article, articleNew]] }
+        });
+      } catch (err) {
+        console.error('Add to log error:', err);
+      }
+    },
+
+
+    // === GET USER DATA ===
+
+    async getUser() {
+      try {
+        const rows = await getRange(this.ctx.settings.usersSheet, 'A:H');
+        const row = rows.find(r => r[0] == this.ctx.chatId);
+        return row ?? null;
+      } catch (err) {
+        console.error(`[getUser] Error reading sheet:`, err.message);
+        return null;
+      }
+    },
+
+
+    // === Refreshing step & temp_data ===
+
+    async updateUserStep({ step = '', opts = {}, saleDate = '' } = {}) {
+      const rows = await getRange(this.ctx.settings.usersSheet, 'A:H');
+      const rowIndex = rows.findIndex(r => r[0] == this.ctx.chatId);
+      if (rowIndex === -1) return false;
+
+      const newRow = [...rows[rowIndex]];
+
+      newRow[4] = step;
+      newRow[5] = JSON.stringify(opts);
+      if (saleDate === 'today')
+        newRow[6] = '';  // remove date if 'today'
+      else if (saleDate)
+        newRow[6] = saleDate;  // don't change if unset
+
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `${this.ctx.settings.usersSheet}!A${rowIndex + 1}:H${rowIndex + 1}`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [newRow] }
+      });
+      return true;
+    },
+
+    async selectQty(editOrSend, operation, opLabel, tempData, price) {
+      const msg = `<b>${opLabel}: ${tempData.product} по ${price} ₴.</b> Количество:`;
+      const kbd = { reply_markup: { inline_keyboard: [[{text: '1', callback_data: 'qty_1'}, {text: '2', callback_data: 'qty_2'}, {text: '3', callback_data: 'qty_3'}], [{text: 'Другое…', callback_data: 'other'}]]}};
+      messageId = await this[editOrSend](msg, kbd);
+      await this.updateUserStep({ step: `${operation}_qty`, opts: {...tempData, price, messageId} });
+    }
+
+  };
 }
 
 
@@ -296,234 +428,161 @@ app.get('/', (req, res) => res.send('Webhook ready.'));
 
 app.post('/', async (req, res) => {
   try {
-    const data = req.body;
-    console.log('GOT:', JSON.stringify(data, null, 2)); // DEBUG
+    const body = req.body;
+    // console.log('[DEBUG] body=', JSON.stringify(body, null, 2));
 
-    const message = data.message || data.callback_query?.message;
-    if (!message) {
-      console.log('No message - ignore'); // DEBUG
-      return res.send('OK');
-    }
+    const message = body.message || body.callback_query?.message;
+    if (!message) return res.send('OK'); // No message - ignore
 
+    const firstName = body.message?.from?.first_name || 'Друг';
     const chatId = message.chat.id;
-    const text = message.text || data.callback_query?.data;
-    const messageId = message.message_id;
-
-    console.log(`User ${chatId} sent: "${text}"`); // DEBUG
+    const text = body.message?.text.trim();
+    let messageId = message.message_id;
 
     const settings = await getSettings();
 
-    const user = await getUser(settings, chatId);
+    let ctx = {settings, chatId, messageId};
+    let bot = createBotHandlers(ctx);
+
+    const user = await bot.getUser();
     if (!user || user[3] !== 'Active') {
-      await sendMessage(chatId, '🚫 Доступ запрещён.');
+      await bot.sendMessage(subMsg(settings.denyMsg, { name: firstName}));
       return res.send('OK');
     }
 
     let today = formatDate(new Date()); // fallback
-    if (message.date) {
-      today = formatDate(new Date(
-        new Date(message.date * 1000).toLocaleString('uk-UA', { timeZone: 'Europe/Kiev' })
-      ));
-    }
+    if (message.date) today = formatDate(new Date(message.date * 1000));
 
     const userStep = user[4] || '';
     const tempData = user[5] ? JSON.parse(user[5]) : {};
     const saleDate = user[6] || today;
 
+    messageId = tempData.messageId ?? '';
+    ctx.messageId = messageId;
+    bot = createBotHandlers(ctx);
 
-    // === PROCESSING CALLBACK_QUERY (FIRST) ===
-    if (data.callback_query) {
-      const callbackQuery = data.callback_query;
-      const callbackQueryId = callbackQuery.id;
-      const chatId = callbackQuery.message.chat.id;
-      const messageId = callbackQuery.message.message_id;
-      const callbackData = callbackQuery.data;
+    const [operation, stage, substage] = userStep.split('_');
+    opLabel = OPS[operation]?.op || operation;
+    console.log(`[DEBUG] table operation=${operation}|stage=${stage}|substage=${substage}; opLabel=${opLabel}`)
 
+    const btnYes       = {text: `${ICO.ok} Да`,         callback_data: 'confirm'};
+    const btnCancel    = {text: `${ICO.cancel} Отмена`, callback_data: 'cancel'};
+    const kbdCancel    = { reply_markup: { inline_keyboard: [[ btnCancel ]] } };
+    const kbdYesCancel = { reply_markup: { inline_keyboard: [[ btnYes, btnCancel ]] } };
 
-      // Pagination of goods
-      if (callbackData.startsWith('sale_page_') && userStep === 'sale_step_1') {
-        const page = Number(callbackData.replace('sale_page_', ''));
-        const goods = await getColumn(settings.goodsSheet, 'A');
-        await showGoodsPage(chatId, tempData.messageId, goods, page);
-        await updateUserStep(settings, chatId, 'sale_step_1', { ...tempData, page });
+    // === PROCESSING CALLBACK_QUERY ===
+    if (body.callback_query) {
+      const cbQueryId = body.callback_query.id;
+      const chatId    = body.callback_query.message.chat.id;
+      const messageId = body.callback_query.message.message_id;
+
+      const [cbKey, cbValue] = body.callback_query.data.split('_');
+      console.log(`[DEBUG] cbKey=${cbKey}|cbValue=${cbValue}`)
+
+      // Product selected ? price selection || Enter new product
+      if (stage === 'goods' && cbKey === 'product') {
+        const product = cbValue;
+        if (product !== 'new') {
+          const prices = await bot.getPricesForProduct(product);
+          await bot.showPricesPage(product, prices, 0, opLabel, operation);
+          await bot.updateUserStep({ step: `${operation}_prices`, opts: { ...tempData, product, page: 0 }});
+        } else {
+          await bot.editMessage(`<b>${opLabel}:</b>\n\nВведите название товара:`, kbdCancel);
+          await bot.updateUserStep({ step: `${operation}_productnew`, opts: {...tempData}});
+        }
         return res.send('OK');
       }
 
-      // Goods select
-      if (callbackData.startsWith('sale_product_') && userStep === 'sale_step_1') {
-        const product = callbackData.replace('sale_product_', '');
-        const prices = await getPricesForProduct(settings, product);
-        await showPricesPage(chatId, messageId, product, prices, 0);
-        await updateUserStep(settings, chatId, 'sale_step_2', { product, pricePage: 0 });
+      // Pagination of goods and prices
+      if (['goods', 'prices'].includes(stage) && cbKey === 'page') {
+        const page = Number(cbValue);
+        if (stage === 'goods') {
+          const goods = await getRange(settings.goodsSheet, 'A:B');
+          await bot.showGoodsPage(goods, page, opLabel, operation);
+        } else {
+          const prices = await bot.getPricesForProduct(tempData.product);
+          await bot.showPricesPage(tempData.product, prices, page, opLabel, operation);
+        }
+        await bot.updateUserStep({ step: `${operation}_${stage}`, opts: { ...tempData, page } });
         return res.send('OK');
       }
 
-      // Pagination of prices
-      if (callbackData.startsWith('price_page_') && userStep === 'sale_step_2') {
-        const page = Number(callbackData.replace('price_page_', ''));
-        const prices = await getPricesForProduct(settings, tempData.product);
-        await showPricesPage(chatId, messageId, tempData.product, prices, page);
-        await updateUserStep(settings, chatId, 'sale_step_2', { ...tempData, pricePage: page });
+      // Price selected → select quantity || Price input
+      if (stage === 'prices' && cbKey === 'price') {
+        const price = Number(cbValue);
+        if (price !== 'new') {
+          await bot.selectQty('editMessage', operation, opLabel, tempData, price);
+        } else {
+          await bot.editMessage(`<b>${opLabel}: ${tempData.product}</b>\n\nВведите цену:`, kbdCancel);
+          await bot.updateUserStep({ step: `${operation}_price_input`, opts: { ...tempData } });
+        }
         return res.send('OK');
       }
 
-      // Price select
-      if (callbackData.startsWith('sale_price_') && userStep === 'sale_step_2') {
-        const price = Number(callbackData.replace('sale_price_', ''));
-        await editMessage(chatId, messageId, `**Продажа: ${tempData.product} ${price} ₴.** Количество:`, {
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: '1', callback_data: `sale_qty_1` },
-                { text: '2', callback_data: `sale_qty_2` }
-              ],
-              [
-                { text: '3', callback_data: `sale_qty_3` },
-                { text: 'Другое…', callback_data: 'sale_qty_other' }
-              ]
-            ]
-          }
-        });
-        await updateUserStep(settings, chatId, 'sale_step_3', { ...tempData, price });
-        return res.send('OK');
-      }
-
-      // === Step 3: quantity selection → confirmation ===
-      if (callbackData.startsWith('sale_qty_') && userStep === 'sale_step_3') {
+      // Quantity selection → confirmation
+      if (stage === 'qty' && substage !== 'input') {
         let qty;
-        if (callbackData === 'sale_qty_other') {
-          await editMessage(chatId, messageId, `**Продажа: ${tempData.product} ${tempData.price} ₴.**\n\nВведите количество:`, {
-            reply_markup: { inline_keyboard: [[{ text: 'Отмена', callback_data: 'sale_cancel' }]] }
-          });
-          await updateUserStep(settings, chatId, 'sale_step_qty_input', { ...tempData });
+        if (cbKey === 'other') {
+          const messageId = await bot.editMessage(`<b>${opLabel}: ${tempData.product}</b> по <b>${tempData.price}</b> ₴.\n\nВведите количество:`, kbdCancel);
+          await bot.updateUserStep({ step: `${operation}_qty_input`, opts: { ...tempData, messageId } });
           return res.send('OK');
         } else {
-          qty = Number(callbackData.replace('sale_qty_', ''));
+          qty = Number(cbValue);
         }
 
         const total = tempData.price * qty;
-
-        await updateUserStep(settings, chatId, 'sale_step_confirm', { ...tempData, qty, total });
-
-        await editMessage(chatId, messageId, `
-**Подтвердите продажу**
-
-*${tempData.product}* по *${tempData.price} ₴*  
-*${qty} шт.*  
-
-Всё верно?
-      `.trim(), {
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: '✅ Да',     callback_data: 'sale_confirm' },
-                { text: '❌ Отмена', callback_data: 'sale_cancel' }
-              ]
-            ]
-          }
-        });
-
+        const messageId = await bot.editMessage(`${OPS[operation].prompt}\n<b>${tempData.product} ${qty}</b> × <b>${tempData.price}</b>\n\nВсё верно?`, kbdYesCancel);
+        await bot.updateUserStep({ step: `${operation}_confirm`, opts: { ...tempData, messageId, qty, total } });
         return res.send('OK');
       }
 
-
-      // === Final confirmation ===
-      if (callbackData === 'sale_confirm' && userStep === 'sale_step_confirm') {
-        const total = tempData.price * tempData.qty;
-        // const saleDate = await getSaleDate(settings, chatId, today);  // ← Get date
-
-        await addToLog(settings, saleDate, 'Продажа', tempData.product, tempData.qty, tempData.price, total);
-
-        await answerCallbackQuery(callbackQueryId, '✅ Продажа записана!');
-
-        const keyboard = await getMainMenuKeyboard(saleDate, today);  // Refresh date button
-        console.log('[DEBUG] messageId', messageId);
-        await editMessage(chatId, messageId, `
-**Продажа записана!**
-
-*${tempData.product}*  
-Цена: *${tempData.price} ₴*  
-Количество: *${tempData.qty} шт.*  
-Сумма: *${total} ₴*  
-Дата: *${saleDate}*
-      `.trim(), keyboard);
-
-        await updateUserStep(settings, chatId);  // reset
+      // Final confirmation
+      if (stage === 'confirm' && cbKey === 'confirm') {
+        await bot.addToLog(saleDate, opLabel, tempData.product, tempData.qty, tempData.price, tempData.newprice);
+        await bot.updateUserStep();  // reset
+        await bot.editMessage(`${OPS[operation].saved}\n\n<b>${tempData.product} ${tempData.qty} × ${tempData.newprice ? `<i>${tempData.price}</i> → ${tempData.newprice}` : `${tempData.price}`}</b> = ${tempData.price * tempData.qty}\nДата: <b>${saleDate}</b>`);
         return res.send('OK');
       }
 
-
-      if (callbackData === 'sale_cancel') {
-        await editMessage(chatId, messageId, 'Продажа отменена.', {
-          reply_markup: { inline_keyboard: [] }
-        });
-        await updateUserStep(settings, chatId);  // reset
+      // Cancels any cancellable step
+      if (cbKey === 'cancel') {
+        await bot.editMessage(OPS[operation].cancelled);
+        await bot.updateUserStep();  // reset
         return res.send('OK');
       }
-
-
-      // === Select any date (including today) ===
-      if (callbackData?.startsWith('set_date_')) {
-        const selectedDate = callbackData.replace('set_date_', '');
-
-        let text;
-        if (selectedDate === 'other') {
-          await editMessage(chatId, messageId, 'Введите дату: ДД.ММ.ГГГГ', {
-            reply_markup: { inline_keyboard: [[{ text: 'Отмена', callback_data: 'sale_cancel' }]] }
-          });
-          await updateUserStep(settings, chatId, 'awaiting_custom_date');
-          return res.send('OK');
-        } else if (selectedDate === today) {
-          await updateUserStep(settings, chatId, '', {}, 'today');
-          text = `Дата: *сегодня*`;
-        } else {
-          await updateUserStep(settings, chatId, '', {}, selectedDate);
-          text = `Дата: *${selectedDate}*`;
-        }
-
-        const keyboard = await getMainMenuKeyboard(saleDate, today);
-        await editMessage(chatId, messageId, text, keyboard);
-
-        return res.send('OK');
-      }
-
 
     }
 
 
     // === THEN text (Продажа, /start etc.) ===
 
-    // === /start ===
+    const opKey = REV[text];
+    console.log(`[DEBUG] opKey=${opKey}`);
 
     if (text === '/start') {
-      console.log('[DEBUG] /start, settings:', JSON.stringify(settings, null, 2));
-      console.log('[DEBUG] user:', JSON.stringify(user, null, 2));
-      console.log('[DEBUG] userStep:', JSON.stringify(userStep, null, 2));
-      console.log('[DEBUG] tempData:', JSON.stringify(tempData, null, 2));
-
-      await updateUserStep(settings, chatId);  // reset
-      const keyboard = await getMainMenuKeyboard(saleDate, today);
-      await sendMessage(chatId, settings.startMsg, keyboard);
+      await bot.updateUserStep();  // reset
+      const keyboard = await getMainMenuKeyboard(saleDate, today, settings.schedSheet);
+      await bot.sendMessage(subMsg(settings.startMsg, { name: firstName }), keyboard);
       return res.send('OK');
-    }
 
+    } else if (opKey && ['sale', 'income', 'outcome', 'discount', 'return'].includes(opKey)) {
+      console.log(`[DEBUG] Entering ${opKey}`);
+      const goods = await getRange(settings.goodsSheet, 'A:B');
+      const opLabel = OPS[opKey].op || opKey;
+      const messageId = await bot.showGoodsPage(goods, 0, opLabel, opKey);  // get ID
+      await bot.updateUserStep({ step: `${opKey}_goods`, opts: { page: 0, messageId } });  // save ID once
 
-    // === Продажа ===
+    } else if (text?.includes(ICO.seller)) {
+      await bot.sendMessage('😘 Молодец');
+      return res.send('OK');
 
-    if (text === '🧾Продажа' || userStep.startsWith('sale_')) {
-      console.log(`ENTERING ${text}`); // DEBUG
-      if (!userStep) {
-        const goods = await getColumn(settings.goodsSheet, 'A');
+    } else if (opKey && opKey === 'report') {
+      report = await generateReport(settings.openingBalance, saleDate, settings.logSheet);
+      await bot.sendMessage(report);
+      return res.send('OK');
 
-        const messageId = await showGoodsPage(chatId, null, goods, 0);                  // get ID
-        await updateUserStep(settings, chatId, 'sale_step_1', { page: 0, messageId });  // save it once
-      }
-    }
-
-    // === Натиснута кнопка дати (з 🗓️ або 🔙) ===
-    if (text.includes('🗓️') || text.includes('🔙')) {
-      // 09.11.2025 → 2025-11-09 = valid date string
-      const todayDate = new Date(today.split('.').reverse().join('-'));
+    } else if (text?.includes(ICO.today) || text?.includes(ICO.day)) {
+      const todayDate = new Date(today.split('.').reverse().join('-'));  // 09.11.2025 → 2025-11-09 = valid date string
 
       const yesterdayDate = new Date(todayDate);
       yesterdayDate.setDate(todayDate.getDate() - 1);
@@ -533,44 +592,56 @@ app.post('/', async (req, res) => {
       dayBeforeDate.setDate(todayDate.getDate() - 2);
       const dayBefore = formatDate(dayBeforeDate);
 
-      await sendMessage(chatId, 'Выберите дату операции:', {
+      await bot.sendMessage('Выберите или введите дату в формате ДД.ММ.ГГГГ:', {
         reply_markup: {
-          inline_keyboard: [
-            [
-              { text: dayBefore, callback_data: `set_date_${dayBefore}` },
-              { text: yesterday, callback_data: `set_date_${yesterday}` }
-            ],
-            [
-              { text: 'Сегодня', callback_data: 'set_date_today' },
-              { text: 'Другая…', callback_data: 'set_date_other' }
-            ]
-          ]
+          keyboard: [[ { text: dayBefore }, { text: yesterday }, { text: 'Сегодня' } ]],
+          resize_keyboard: true
         }
       });
+      await bot.updateUserStep({ step: 'date_enter' });
       return res.send('OK');
+
+    } else if (stage === 'qty' && substage === 'input') {
+      qty = Number(text);
+      await bot.editMessageRmButtons();
+      const total = tempData.price * qty;
+      messageId = await bot.sendMessage(`${OPS[operation].prompt}\n\n<b>${tempData.product} ${qty}</b> × <b>${tempData.price}</b>\n\nВсё верно?`, kbdYesCancel);
+      await bot.updateUserStep({ step: `${operation}_confirm`, opts: { ...tempData, messageId, qty, total } });
+      return res.send('OK');
+
+    } else if (stage === 'productnew') {
+      product = text;
+      await bot.editMessageRmButtons();
+      messageId = await bot.sendMessage(`<b>${opLabel}: ${product}</b>\n\nВведите цену нового товара:`);
+      await bot.updateUserStep({ step: `${operation}_price_input`, opts: { ...tempData, product, messageId }});
+      return res.send('OK');
+
+    } else if (stage === 'price' && substage === 'input') {
+      // Price entered → select quantity
+      price = Number(text);
+      await bot.editMessageRmButtons();
+      await this.selectQty('sendMessage', operation, opLabel, tempData, price);
     }
 
-
-    if (userStep === 'awaiting_custom_date' && message?.text) {
-      const input = message.text.trim();
+    if (operation === 'date' && stage === 'enter' && text) {
+      const input = text  === 'Сегодня' ? today : text;
       const regex = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/;
       if (!regex.test(input)) {
-        await sendMessage(chatId, 'Неверный формат. ДД.ММ.ГГГГ');
+        await bot.sendMessage('Неверный формат даты.\nВведите дату в формате ДД.ММ.ГГГГ');
         return res.send('OK');
       }
 
       const [, d, m, y] = input.match(regex);
       const date = new Date(`${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`);
       if (isNaN(date.getTime()) || date.getDate() != d || date.getMonth() + 1 != m || date.getFullYear() != y) {
-        await sendMessage(chatId, 'Неверная дата. Попробуйте еще:');
+        await bot.sendMessage('Неверная дата. Попробуйте еще.');
         return res.send('OK');
       }
 
       const formatted = date.toLocaleDateString('uk-UA');  // 09.11.2025
-      await updateUserStep(settings, chatId, '', {}, formatted);
-      const keyboard = await getMainMenuKeyboard(saleDate, today);
-      await sendMessage(chatId, `Дата: *${formatted}*`, keyboard);
-
+      await bot.updateUserStep({ saleDate: text === 'Сегодня' ? 'today' : formatted });
+      const keyboard = await getMainMenuKeyboard(formatted, today, settings.schedSheet);
+      await bot.sendMessage(`Дата: <b>${formatted}</b>`, keyboard);
       return res.send('OK');
     }
 
