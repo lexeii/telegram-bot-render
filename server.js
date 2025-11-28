@@ -23,16 +23,17 @@ const sheets = google.sheets({ version: 'v4', auth });
 
 
 const OPS = {
-  sale:     {op:'Продажа',    prompt:'Подтвердите продажу:',    saved:'Продажа сохранена',    cancelled:'Продажа отменена'    },
-  income:   {op:'Приход',     prompt:'Подтвердите приход:',     saved:'Приход сохранён',      cancelled:'Приход отменён'      },
-  outcome:  {op:'Списание',   prompt:'Подтвердите списание:',   saved:'Списание сохранено',   cancelled:'Списание отменено'   },
-  discount: {op:'Переоценка', prompt:'Подтвердите переоценку:', saved:'Переоценка сохранена', cancelled:'Переоценка отменена' },
-  return:   {op:'Возврат',    prompt:'Подтвердите возврат:',    saved:'Возврат сохранён',     cancelled:'Возврат отменён'     },
+  sale:     {op:'Продажа',   prompt:'Подтвердите продажу:',    saved:'Продажа сохранена',    cancelled:'Продажа отменена'    },
+  income:   {op:'Приход',    prompt:'Подтвердите приход:',     saved:'Приход сохранён',      cancelled:'Приход отменён'      },
+  outcome:  {op:'Списание',  prompt:'Подтвердите списание:',   saved:'Списание сохранено',   cancelled:'Списание отменено'   },
+  discount: {op:'Переоцен.', prompt:'Подтвердите переоценку:', saved:'Переоценка сохранена', cancelled:'Переоценка отменена' },
+  return:   {op:'Возврат',   prompt:'Подтвердите возврат:',    saved:'Возврат сохранён',     cancelled:'Возврат отменён'     },
   report:   {op:'Отчёт'}
 };
 const REV  = Object.fromEntries(Object.entries(OPS).map(([key, data]) => [data.op, key]));
-const WORD = { report: 'Отчёт', shoppy: 'Продавец', date: 'Дата', today: 'Сегодня' };
-const ICO  = { today: '🗓️', day: '👀', seller: '🤵', new: '🆕', ok: '✅', cancel: '❌' };
+const WORD = { report: 'Отчёт', shoppy: 'Продавец', noname: 'Друг', date: 'Дата', today: 'Сегодня', back: '◀ Назад', forth: 'Вперед ▶' };
+const ICON  = { today: '🗓️', day: '👀', seller: '🤵', new: '🆕', ok: '✅', cancel: '❌', oper1: '🔸', oper2: '🔹', pkg: '📦', sheet: '❇️' };
+const months = [ 'янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек' ];
 
 function subMsg(template, data) {
   return template.replace(/\{(\w+)\}/g, (match, key) => data[key] ?? match);
@@ -92,10 +93,21 @@ function formatDate(date) {
   return date.toLocaleDateString('uk-UA');  // 09.11.2025
 }
 
+// === FORMAT CURRENCY ===
+
+function formatCurrency(num, isSigned = false) {
+  if (num === 0) return '<b>0</b> ₴';
+  const abs = Math.abs(num);
+  const sign = isSigned ? (num > 0 ? '+' : '−') : (num > 0 ? '' : '−');
+  let str = abs.toString();
+  if (str.length > 4) str = str.replace(/\B(?=(\d{3})+(?!\d))/g, '\u202F');
+  return `<b>${sign}${str}</b> ₴`;
+}
+
 
 async function getSeller(sheet, date) {
   const schedRows = await getRange(sheet, 'A:B');
-  let seller = WORD.shoppy[0];
+  let seller = WORD.shoppy;
   for (const row of schedRows) {
     if (row[0] === date) seller = row[1];
   }
@@ -107,11 +119,20 @@ async function getSeller(sheet, date) {
 
 async function getMainMenuKeyboard(saleDate, today, schedSheet) {
   const seller   = await getSeller(schedSheet, saleDate);
-  const dateText = (saleDate === today) ? `${ICO.today}${today}` : `${ICO.day}${saleDate}`;
+  const icon = (saleDate === today) ? ICON.today : ICON.day;
+  const [dayS, monthS, yearS] = saleDate.split('.').map(Number);
+  const [dayT, monthT, yearT] =    today.split('.').map(Number);
+  const shortMonthS = months[monthS - 1];
+  const shortYearS  = yearS.toString().slice(-2);
+  if (yearS === yearT)
+    dateText = `${icon} ${dayS} ${shortMonthS}`;
+  else
+    dateText = `${icon} ${dayS} ${shortMonthS} ${shortYearS}`;
+
   return {
     reply_markup: {
       keyboard: [[OPS.sale.op,   OPS.income.op, OPS.outcome.op,           OPS.discount.op],
-                 [OPS.return.op, WORD.report,  `${ICO.seller} ${seller}`, dateText]],
+                 [OPS.return.op, WORD.report,  `${ICON.seller} ${seller}`, dateText]],
       resize_keyboard: true
     }
   };
@@ -140,6 +161,8 @@ async function generateReport(openingBalance, targetDateStr, logSheet) {
     const article = `${product}_${price}`; // for internal grouping
     const amount = qty * price;
 
+    if (!type) console.error(`Undefined type on ${opDate}`);
+
     if (opDate < targetDate) { // prev date
       if (type === 'discount') {
         prevOps.discount += qty * (newPrice - price);
@@ -147,14 +170,15 @@ async function generateReport(openingBalance, targetDateStr, logSheet) {
         prevOps[type] += amount;
       }
 
-    } else if (opDate === targetDate) { // report date
+    } else if (opDate === targetDate) { // report's date
       if (type !== 'discount') {
-        if (!dayOps[type][article]) dayOps[type][article] = { name: product, price, qty: 0 };
+        if (!dayOps[type][article])
+          dayOps[type][article] = { name: product, price, qty: 0 };
         dayOps[type][article].qty += qty;
       } else { // discount
         const delta = qty * (newPrice - price);
         const sign = delta >= 0 ? '+' : '';
-        const line = `${product} ${qty}×${price} → ${qty}×${newPrice} (${sign}${delta})`;
+        const line = `${product} ${qty}×${price}→${newPrice} (${sign}${delta})`;
         if (!dayOps.discount[article]) dayOps.discount[article] = [];
         dayOps.discount[article].push(line);
         dayOps[type].totalDelta = (dayOps[type].totalDelta || 0) + delta;
@@ -175,9 +199,11 @@ async function generateReport(openingBalance, targetDateStr, logSheet) {
     }
   }
 
-  const endOfDayBalance = startOfDayBalance - dayTotals.sale + dayTotals.return + dayTotals.income - dayTotals.outcome + dayTotals.discount;
+  const grandTotal = dayTotals.income - dayTotals.outcome + dayTotals.discount - dayTotals.sale + dayTotals.return;
+  const endOfDayBalance = startOfDayBalance + grandTotal;
 
   const lines = [];
+  let totalsDisplayed = 0;
   lines.push(`<b>ОТЧЁТ за ${targetDateStr}</b>`);
   lines.push('');
 
@@ -185,7 +211,7 @@ async function generateReport(openingBalance, targetDateStr, logSheet) {
 
   for (const type of order) {
     const items = dayOps[type];
-    const total = dayTotals[type] ?? 0;
+    let total = dayTotals[type] ?? 0;
 
     if ((type === 'discount' && total === 0) || (type !== 'discount' && Object.keys(items).length === 0)) {
       continue;
@@ -197,32 +223,84 @@ async function generateReport(openingBalance, targetDateStr, logSheet) {
       for (const arr of Object.values(items)) {
         if (Array.isArray(arr)) {
           for (const line of arr) {
-            lines.push(`🔹${line}`);
+            lines.push(`${ICON.oper2}${line}`);
           }
         }
       }
     } else {
       for (const item of Object.values(items)) {
-        lines.push(`🔸${item.name} ${item.qty}×${item.price}`);
+        lines.push(`${ICON.oper1}${item.name} ${item.qty}×${item.price}`);
       }
     }
 
-    if (type === 'discount') {
-      const sign = total >= 0 ? '+' : '';
-      lines.push(`Итого: <b>${sign}${total.toLocaleString('uk-UA')}</b> ₴`);
-    } else {
-      lines.push(`Итого: <b>${total.toLocaleString('uk-UA')}</b> ₴`);
-    }
+    if (['sale', 'outcome'].includes(type)) total = -total;
+    lines.push(`Итого: ${formatCurrency(total, true)}`);
     lines.push('');
+    totalsDisplayed += 1;
   }
 
+  if (totalsDisplayed > 1) {
+    lines.push(`Итого за день: ${formatCurrency(grandTotal, true)}`);
+    lines.push('');
+  }
   lines.push('<b>Остаток товаров:</b>');
-  lines.push(`💵 начало дня: <b>${startOfDayBalance.toLocaleString('uk-UA')}</b> ₴`);
-  lines.push(`💵 конец дня: &#8239;&#8239;<b>${endOfDayBalance.toLocaleString('uk-UA')}</b> ₴`); // &#8239;&#8239;
+  lines.push(`${ICON.pkg} начало дня: ${formatCurrency(startOfDayBalance)}`);
+  lines.push(`${ICON.pkg} &#8239;конец&#8239; дня: ${formatCurrency(endOfDayBalance)}`);
   lines.push('');
-  lines.push(`🟢 <a href="https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/view?gid=${REST_GID}">Остатки</a>`);
+  lines.push(`${ICON.sheet} <a href="https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/view?gid=${REST_GID}">Остатки</a>`);
 
   return lines.join('\n');
+}
+
+
+function parseFlexibleDate(str, today) {
+  const parts = str.split('.');
+  let day   = parseInt(parts[0], 10);
+  let month = parseInt(parts[1], 10);
+  let year  = parseInt(parts[2], 10);
+
+  if (isNaN(day) || day < 1 || day > 31) return { valid: false };
+
+  switch (parts.length) {
+    case 1:  // only day: "5", "05", "12"
+      month = today.getMonth() + 1;
+      year  = today.getFullYear();
+      break;
+    case 2:  // day & month: "15.3", "9.11", "05.01"
+      if (isNaN(month) || month < 1 || month > 12) return { valid: false };
+      year = today.getFullYear();
+      break;
+    case 3:  // full date: "22.11.25" or "22.11.2025"
+      if (isNaN(month) || month < 1 || month > 12) return { valid: false };
+
+      switch (parts[2].length) {
+        case 2:
+          year = 2000 + year;  // 25 → 2025
+          break;
+        case 4:
+          if (year < 2000 || year > 2100) return { valid: false }; // protection from 0000 or 9999
+          break;
+        default:
+          return { valid: false };
+      }
+      break;
+    default:
+      return { valid: false };
+  }
+
+  // create the date and validate it (for example, 31.04 → Invalid Date)
+  const date = new Date(year, month - 1, day);
+  if (isNaN(date.getTime()) || date.getDate() !== day || date.getMonth() !== month - 1 || date.getFullYear() !== year) return { valid: false };
+
+  const formatted = `${day.toString().padStart(2, '0')}.${month.toString().padStart(2, '0')}.${year}`;
+  const save = date === today ? 'today' : formatted;
+
+  return {
+    valid: true,
+    date,
+    formatted,  // "22.11.2025"
+    save
+  };
 }
 
 
@@ -294,19 +372,19 @@ function createBotHandlers(ctx) { // settings, chatId, messageId
       for (let i = 0; i < pageList.length; i += columns) {
         const [name1, emoji1] = pageList[i];
         const item1 = { text: `${emoji1 ?? ''} ${name1}`,
-          callback_data: emoji1 === ICO.new ? `${label}_new` : `${label}_${name1}` };
+          callback_data: emoji1 === ICON.new ? `${label}_new` : `${label}_${name1}` };
         const row = [item1];
 
         if (i + 1 < pageList.length) {
           const [name2, emoji2] = pageList[i + 1];
           row.push({ text: `${emoji2 ?? ''} ${name2}`,
-            callback_data: emoji2 === ICO.new ? `${label}_new` : `${label}_${name2}` });
+            callback_data: emoji2 === ICON.new ? `${label}_new` : `${label}_${name2}` });
         }
 
         if (i + 2 < pageList.length) {
           const [name3, emoji3] = pageList[i + 2];
           row.push({ text: `${emoji3 ?? ''} ${name3}`,
-            callback_data: emoji3 === ICO.new ? `${label}_new` : `${label}_${name3}` });
+            callback_data: emoji3 === ICON.new ? `${label}_new` : `${label}_${name3}` });
         }
 
         keyboard.push(row);
@@ -314,8 +392,8 @@ function createBotHandlers(ctx) { // settings, chatId, messageId
 
       // Navigation
       const nav = [];
-      if (page > 0) nav.push({ text: '◀ Назад', callback_data: `page_${page - 1}` });
-      if (end < list.length) nav.push({ text: 'Вперед ▶', callback_data: `page_${page + 1}` });
+      if (page > 0) nav.push({ text: WORD.back, callback_data: `page_${page - 1}` });
+      if (end < list.length) nav.push({ text: WORD.forth, callback_data: `page_${page + 1}` });
       if (nav.length) keyboard.push(nav);
 
       return { reply_markup: { inline_keyboard: keyboard } };
@@ -326,7 +404,7 @@ function createBotHandlers(ctx) { // settings, chatId, messageId
 
     async showGoodsPage(goods, page, opLabel, operation) {
       const perPage = 15;
-      if (operation === 'income') goods.push(['Новый товар…', ICO.new]);
+      if (operation === 'income') goods.push(['Новый товар…', ICON.new]);
       const keyboard = this.paginate(goods, perPage, page, 'product', operation);
       const totalPages = Math.ceil(goods.length / perPage);
       const text = `<b>${opLabel}.</b> Товары ${page + 1}/${totalPages}:`;
@@ -343,7 +421,7 @@ function createBotHandlers(ctx) { // settings, chatId, messageId
 
     async showPricesPage(product, prices, page, opLabel, operation) {
       const perPage = 15;
-      if (operation === 'income') prices.push(['Новая цена…', ICO.new]);
+      if (operation === 'income') prices.push(['Новая цена…', ICON.new]);
       const keyboard = this.paginate(prices, perPage, page, 'price', operation);
       const totalPages = Math.ceil(prices.length / perPage);
       const text = `<b>${opLabel}: ${product}.</b> Цены${ totalPages > 1 ? ` ${page + 1}/${totalPages}` : ''}:`;
@@ -408,11 +486,11 @@ function createBotHandlers(ctx) { // settings, chatId, messageId
       return true;
     },
 
-    async selectQty(editOrSend, operation, opLabel, tempData, price) {
-      const msg = `<b>${opLabel}: ${tempData.product} по ${price} ₴.</b> Количество:`;
+    async selectQty(editOrSend, operation, opLabel, opData, price) {
+      const msg = `<b>${opLabel}: ${opData.product} по ${price} ₴.</b> Количество:`;
       const kbd = { reply_markup: { inline_keyboard: [[{text: '1', callback_data: 'qty_1'}, {text: '2', callback_data: 'qty_2'}, {text: '3', callback_data: 'qty_3'}], [{text: 'Другое…', callback_data: 'other'}]]}};
       messageId = await this[editOrSend](msg, kbd);
-      await this.updateUserStep({ step: `${operation}_qty`, opts: {...tempData, price, messageId} });
+      await this.updateUserStep({ step: `${operation}_qty`, opts: {...opData, price, messageId} });
     }
 
   };
@@ -434,7 +512,7 @@ app.post('/', async (req, res) => {
     const message = body.message || body.callback_query?.message;
     if (!message) return res.send('OK'); // No message - ignore
 
-    const firstName = body.message?.from?.first_name || 'Друг';
+    const userName = body.message?.from?.first_name || WORD.noname;
     const chatId = message.chat.id;
     const text = body.message?.text.trim();
     let messageId = message.message_id;
@@ -444,20 +522,21 @@ app.post('/', async (req, res) => {
     let ctx = {settings, chatId, messageId};
     let bot = createBotHandlers(ctx);
 
-    const user = await bot.getUser();
-    if (!user || user[3] !== 'Active') {
-      await bot.sendMessage(subMsg(settings.denyMsg, { name: firstName}));
+    const userData = await bot.getUser();
+    if (!userData || userData[3] !== 'Active') {
+      await bot.sendMessage(subMsg(settings.denyMsg, { name: userName}));
       return res.send('OK');
     }
 
-    let today = formatDate(new Date()); // fallback
-    if (message.date) today = formatDate(new Date(message.date * 1000));
+    let todayDate = new Date(); // fallback
+    if (message.date) todayDate = new Date(message.date * 1000);
+    const today = formatDate(todayDate);
 
-    const userStep = user[4] || '';
-    const tempData = user[5] ? JSON.parse(user[5]) : {};
-    const saleDate = user[6] || today;
+    const userStep = userData[4] || '';
+    const opData   = userData[5] ? JSON.parse(userData[5]) : {};
+    const saleDate = userData[6] || today;
 
-    messageId = tempData.messageId ?? '';
+    messageId = opData.messageId ?? '';
     ctx.messageId = messageId;
     bot = createBotHandlers(ctx);
 
@@ -465,8 +544,8 @@ app.post('/', async (req, res) => {
     opLabel = OPS[operation]?.op || operation;
     console.log(`[DEBUG] table operation=${operation}|stage=${stage}|substage=${substage}; opLabel=${opLabel}`)
 
-    const btnYes       = {text: `${ICO.ok} Да`,         callback_data: 'confirm'};
-    const btnCancel    = {text: `${ICO.cancel} Отмена`, callback_data: 'cancel'};
+    const btnYes       = {text: `${ICON.ok} Да`,         callback_data: 'confirm'};
+    const btnCancel    = {text: `${ICON.cancel} Отмена`, callback_data: 'cancel'};
     const kbdCancel    = { reply_markup: { inline_keyboard: [[ btnCancel ]] } };
     const kbdYesCancel = { reply_markup: { inline_keyboard: [[ btnYes, btnCancel ]] } };
 
@@ -485,10 +564,10 @@ app.post('/', async (req, res) => {
         if (product !== 'new') {
           const prices = await bot.getPricesForProduct(product);
           await bot.showPricesPage(product, prices, 0, opLabel, operation);
-          await bot.updateUserStep({ step: `${operation}_prices`, opts: { ...tempData, product, page: 0 }});
+          await bot.updateUserStep({ step: `${operation}_prices`, opts: { ...opData, product, page: 0 }});
         } else {
           await bot.editMessage(`<b>${opLabel}:</b>\n\nВведите название товара:`, kbdCancel);
-          await bot.updateUserStep({ step: `${operation}_productnew`, opts: {...tempData}});
+          await bot.updateUserStep({ step: `${operation}_productnew`, opts: {...opData}});
         }
         return res.send('OK');
       }
@@ -500,10 +579,10 @@ app.post('/', async (req, res) => {
           const goods = await getRange(settings.goodsSheet, 'A:B');
           await bot.showGoodsPage(goods, page, opLabel, operation);
         } else {
-          const prices = await bot.getPricesForProduct(tempData.product);
-          await bot.showPricesPage(tempData.product, prices, page, opLabel, operation);
+          const prices = await bot.getPricesForProduct(opData.product);
+          await bot.showPricesPage(opData.product, prices, page, opLabel, operation);
         }
-        await bot.updateUserStep({ step: `${operation}_${stage}`, opts: { ...tempData, page } });
+        await bot.updateUserStep({ step: `${operation}_${stage}`, opts: { ...opData, page } });
         return res.send('OK');
       }
 
@@ -511,10 +590,10 @@ app.post('/', async (req, res) => {
       if (stage === 'prices' && cbKey === 'price') {
         const price = Number(cbValue);
         if (price !== 'new') {
-          await bot.selectQty('editMessage', operation, opLabel, tempData, price);
+          await bot.selectQty('editMessage', operation, opLabel, opData, price);
         } else {
-          await bot.editMessage(`<b>${opLabel}: ${tempData.product}</b>\n\nВведите цену:`, kbdCancel);
-          await bot.updateUserStep({ step: `${operation}_price_input`, opts: { ...tempData } });
+          await bot.editMessage(`<b>${opLabel}: ${opData.product}</b>\n\nВведите цену:`, kbdCancel);
+          await bot.updateUserStep({ step: `${operation}_price_input`, opts: { ...opData } });
         }
         return res.send('OK');
       }
@@ -523,24 +602,24 @@ app.post('/', async (req, res) => {
       if (stage === 'qty' && substage !== 'input') {
         let qty;
         if (cbKey === 'other') {
-          const messageId = await bot.editMessage(`<b>${opLabel}: ${tempData.product}</b> по <b>${tempData.price}</b> ₴.\n\nВведите количество:`, kbdCancel);
-          await bot.updateUserStep({ step: `${operation}_qty_input`, opts: { ...tempData, messageId } });
+          const messageId = await bot.editMessage(`<b>${opLabel}: ${opData.product}</b> по <b>${opData.price}</b> ₴.\n\nВведите количество:`, kbdCancel);
+          await bot.updateUserStep({ step: `${operation}_qty_input`, opts: { ...opData, messageId } });
           return res.send('OK');
         } else {
           qty = Number(cbValue);
         }
 
-        const total = tempData.price * qty;
-        const messageId = await bot.editMessage(`${OPS[operation].prompt}\n<b>${tempData.product} ${qty}</b> × <b>${tempData.price}</b>\n\nВсё верно?`, kbdYesCancel);
-        await bot.updateUserStep({ step: `${operation}_confirm`, opts: { ...tempData, messageId, qty, total } });
+        const total = opData.price * qty;
+        const messageId = await bot.editMessage(`${OPS[operation].prompt}\n<b>${opData.product} ${qty}</b> × <b>${opData.price}</b>\n\nВсё верно?`, kbdYesCancel);
+        await bot.updateUserStep({ step: `${operation}_confirm`, opts: { ...opData, messageId, qty, total } });
         return res.send('OK');
       }
 
       // Final confirmation
       if (stage === 'confirm' && cbKey === 'confirm') {
-        await bot.addToLog(saleDate, opLabel, tempData.product, tempData.qty, tempData.price, tempData.newprice);
+        await bot.addToLog(saleDate, opLabel, opData.product, opData.qty, opData.price, opData.newprice);
         await bot.updateUserStep();  // reset
-        await bot.editMessage(`${OPS[operation].saved}\n\n<b>${tempData.product} ${tempData.qty} × ${tempData.newprice ? `<i>${tempData.price}</i> → ${tempData.newprice}` : `${tempData.price}`}</b> = ${tempData.price * tempData.qty}\nДата: <b>${saleDate}</b>`);
+        await bot.editMessage(`${OPS[operation].saved}\n\n<b>${opData.product} ${opData.qty} × ${opData.newprice ? `<i>${opData.price}</i> → ${opData.newprice}` : `${opData.price}`}</b> = ${opData.price * opData.qty}\nДата: <b>${saleDate}</b>`);
         return res.send('OK');
       }
 
@@ -562,7 +641,7 @@ app.post('/', async (req, res) => {
     if (text === '/start') {
       await bot.updateUserStep();  // reset
       const keyboard = await getMainMenuKeyboard(saleDate, today, settings.schedSheet);
-      await bot.sendMessage(subMsg(settings.startMsg, { name: firstName }), keyboard);
+      await bot.sendMessage(subMsg(settings.startMsg, { name: userName }), keyboard);
       return res.send('OK');
 
     } else if (opKey && ['sale', 'income', 'outcome', 'discount', 'return'].includes(opKey)) {
@@ -572,7 +651,7 @@ app.post('/', async (req, res) => {
       const messageId = await bot.showGoodsPage(goods, 0, opLabel, opKey);  // get ID
       await bot.updateUserStep({ step: `${opKey}_goods`, opts: { page: 0, messageId } });  // save ID once
 
-    } else if (text?.includes(ICO.seller)) {
+    } else if (text?.includes(ICON.seller)) {
       await bot.sendMessage('😘 Молодец');
       return res.send('OK');
 
@@ -581,7 +660,7 @@ app.post('/', async (req, res) => {
       await bot.sendMessage(report);
       return res.send('OK');
 
-    } else if (text?.includes(ICO.today) || text?.includes(ICO.day)) {
+    } else if (text?.includes(ICON.today) || text?.includes(ICON.day)) {
       const todayDate = new Date(today.split('.').reverse().join('-'));  // 09.11.2025 → 2025-11-09 = valid date string
 
       const yesterdayDate = new Date(todayDate);
@@ -592,9 +671,9 @@ app.post('/', async (req, res) => {
       dayBeforeDate.setDate(todayDate.getDate() - 2);
       const dayBefore = formatDate(dayBeforeDate);
 
-      await bot.sendMessage('Выберите или введите дату в формате ДД.ММ.ГГГГ:', {
+      await bot.sendMessage('Выберите или введите дату:', {
         reply_markup: {
-          keyboard: [[ { text: dayBefore }, { text: yesterday }, { text: 'Сегодня' } ]],
+          keyboard: [[ { text: dayBefore }, { text: yesterday }, { text: WORD.today } ]],
           resize_keyboard: true
         }
       });
@@ -604,47 +683,44 @@ app.post('/', async (req, res) => {
     } else if (stage === 'qty' && substage === 'input') {
       qty = Number(text);
       await bot.editMessageRmButtons();
-      const total = tempData.price * qty;
-      messageId = await bot.sendMessage(`${OPS[operation].prompt}\n\n<b>${tempData.product} ${qty}</b> × <b>${tempData.price}</b>\n\nВсё верно?`, kbdYesCancel);
-      await bot.updateUserStep({ step: `${operation}_confirm`, opts: { ...tempData, messageId, qty, total } });
+      const total = opData.price * qty;
+      messageId = await bot.sendMessage(`${OPS[operation].prompt}\n\n<b>${opData.product} ${qty}</b> × <b>${opData.price}</b>\n\nВсё верно?`, kbdYesCancel);
+      await bot.updateUserStep({ step: `${operation}_confirm`, opts: { ...opData, messageId, qty, total } });
       return res.send('OK');
 
     } else if (stage === 'productnew') {
       product = text;
       await bot.editMessageRmButtons();
       messageId = await bot.sendMessage(`<b>${opLabel}: ${product}</b>\n\nВведите цену нового товара:`);
-      await bot.updateUserStep({ step: `${operation}_price_input`, opts: { ...tempData, product, messageId }});
+      await bot.updateUserStep({ step: `${operation}_price_input`, opts: { ...opData, product, messageId }});
       return res.send('OK');
 
     } else if (stage === 'price' && substage === 'input') {
       // Price entered → select quantity
       price = Number(text);
       await bot.editMessageRmButtons();
-      await this.selectQty('sendMessage', operation, opLabel, tempData, price);
+      await this.selectQty('sendMessage', operation, opLabel, opData, price);
     }
 
     if (operation === 'date' && stage === 'enter' && text) {
-      const input = text  === 'Сегодня' ? today : text;
-      const regex = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/;
-      if (!regex.test(input)) {
-        await bot.sendMessage('Неверный формат даты.\nВведите дату в формате ДД.ММ.ГГГГ');
-        return res.send('OK');
-      }
+      const input = text === WORD.today ? today : text;
+      const result = parseFlexibleDate(input, todayDate);
 
-      const [, d, m, y] = input.match(regex);
-      const date = new Date(`${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`);
-      if (isNaN(date.getTime()) || date.getDate() != d || date.getMonth() + 1 != m || date.getFullYear() != y) {
-        await bot.sendMessage('Неверная дата. Попробуйте еще.');
-        return res.send('OK');
+      if (result.valid) {
+        await bot.updateUserStep({ saleDate: result.save });
+        const keyboard = await getMainMenuKeyboard(result.formatted, today, settings.schedSheet);
+        await bot.sendMessage(`Дата: <b>${result.formatted}</b>`, keyboard);
+      } else {
+        await bot.sendMessage(
+          'Не понял дату. Введите:\n' +
+          '• число этого месяца (например, <b>15</b>)\n' +
+          '• день и месяц (<b>9.11</b>)\n' +
+          '• полную дату (<b>22.11.25</b> или <b>22.11.2025</b>)\n' +
+          'или нажмите кнопку с датой'
+        );
       }
-
-      const formatted = date.toLocaleDateString('uk-UA');  // 09.11.2025
-      await bot.updateUserStep({ saleDate: text === 'Сегодня' ? 'today' : formatted });
-      const keyboard = await getMainMenuKeyboard(formatted, today, settings.schedSheet);
-      await bot.sendMessage(`Дата: <b>${formatted}</b>`, keyboard);
       return res.send('OK');
     }
-
 
     res.send('OK');
   } catch (err) {
