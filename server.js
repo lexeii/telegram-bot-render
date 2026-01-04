@@ -304,6 +304,157 @@ function parseFlexibleDate(str, today) {
 }
 
 
+// === Get latest dates for each op type ===
+
+async function getLastDates(settings) {
+  const OPS_TYPES = [ OPS.sale.op, OPS.income.op, OPS.outcome.op, OPS.discount.op, OPS.return.op ];
+  const rows = await getRange(settings.logSheet, 'A:B');
+  const maxDates = {};
+
+  for (const row of rows) {
+    const opDateStr = row[0]?.trim();  // column A: date "dd.mm.yyyy"
+    const type = row[1]?.trim();       // column B: type
+
+    if (!opDateStr || !type || !OPS_TYPES.includes(type)) continue;
+
+    // Parse date into Date (ignore apostrophe, if any)
+    const [day, month, year] = opDateStr.replace("'", '').split('.');
+    const opDate = new Date(year, month - 1, day);  // valid Date
+
+    if (isNaN(opDate)) continue;  // invalid date: skip
+
+    if (!maxDates[type] || opDate > maxDates[type]) {
+      maxDates[type] = opDate;
+    }
+  }
+
+  // Format back into "dd.mm.yyyy"
+  const result = {};
+  OPS_TYPES.forEach(type => {
+    if (maxDates[type]) {
+      const d = maxDates[type];
+      result[type] = `${d.getDate().toString().padStart(2, '0')}.${(d.getMonth() + 1).toString().padStart(2, '0')}.${d.getFullYear()}`;
+    } else {
+      result[type] = 'нет данных';
+    }
+  });
+
+  return result;
+}
+
+
+// === Calculate salary ===
+
+async function calculateSalary(settings, monthStr, isForecast = false) {  // monthStr is "12.2025" or "01.2026"...
+  const [month, year] = monthStr.split('.').map(Number);  // month 1-12, year
+  const targetMonth = month - 1;  // JS: 0 = January
+
+  const rows = await getRange(settings.schedSheet, 'A:C');
+
+  const sellers = {};
+  let totalSalesActual = 0;
+  let daysPassed = 0;
+  let totalDaysInMonth = 0;
+
+  const now = new Date();
+  const isCurrentMonth = (now.getMonth() === targetMonth && now.getFullYear() === year);
+
+  totalDaysInMonth = new Date(year, targetMonth + 1, 0).getDate();
+
+  for (const row of rows) {
+    const dateStr = row[0]?.trim();
+    if (!dateStr) continue;
+
+    const [d, m, y] = dateStr.split('.').map(Number);
+    const rowDate = new Date(y, m - 1, d);
+
+    if (rowDate.getMonth() !== targetMonth || rowDate.getFullYear() !== year) continue;
+
+    const seller      = row[1]?.trim();
+    const daySalesStr = row[2]?.trim();  // column C — daily sales amount
+    const daySales    = parseInt(daySalesStr?.replace(/\s/g, '') || '0', 10) || 0;
+
+    if (!sellers[seller]) sellers[seller] = { sales: 0, days: 0 };
+    sellers[seller].sales += daySales;
+    sellers[seller].days  += 1;
+
+    // For actual sales only (past days)
+    if (!isForecast || rowDate <= now) {
+      totalSalesActual += daySales;
+      if (rowDate <= now) daysPassed++;
+    }
+  }
+
+  // Forecast, if it is the current month
+  let totalSalesForecast = totalSalesActual;
+  let projectedText = '';
+
+  if (isCurrentMonth && isForecast) {
+    const daysLeft = totalDaysInMonth - daysPassed;
+    if (daysPassed > 0 && daysLeft > 0) {
+      const avgPerDay = totalSalesActual / daysPassed;
+      const projected = Math.round(avgPerDay * daysLeft);
+      totalSalesForecast += projected;
+      projectedText = `За ${daysPassed} дн. продано на ${totalSalesActual.toLocaleString('uk-UA')} ₴\nОжидаем за оставшиеся ${daysLeft} дн. ещё ~${projected.toLocaleString('uk-UA')} ₴\nПрогноз суммы продаж: ${totalSalesForecast.toLocaleString('uk-UA')} ₴`;
+    }
+  }
+
+  const finalSales = isForecast && isCurrentMonth ? totalSalesForecast : totalSalesActual;
+
+  // Salary calculation
+  const base           = parseInt(settings.salBase);
+  const percentRate    = parseFloat(settings.salPct.replace(',', '.'));
+  const bonusPer100k   = parseInt(settings.salBonusPct);
+  const bonusThreshold = parseInt(settings.salBonusTr);
+  const percentRateTxt = percentRate * 100;
+
+  const percentPart = Math.round(finalSales * percentRate);
+  const bonus = Math.floor(finalSales / bonusThreshold) * bonusPer100k;
+  const totalSalaryOne = base + percentPart + bonus;
+
+  // Everyone's contribution
+  const contributions = [];
+  let totalSellerSales = 0;
+  for (const [name, data] of Object.entries(sellers)) {
+    totalSellerSales += data.sales;
+  }
+
+  for (const [name, data] of Object.entries(sellers)) {
+    const sales = data.sales;
+    const percent = totalSellerSales > 0 ? Math.round((sales / totalSellerSales) * 100) : 0;
+    contributions.push(`${ICON.seller}${name}: ${sales.toLocaleString('uk-UA')} ₴ (${percent}%)`);
+  }
+
+  // Forming the text
+  const monthNames = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
+  const monthName = monthNames[targetMonth];
+  const yearStr = year;
+
+  const header = isForecast && isCurrentMonth 
+    ? `<b>🔮 Прогноз зарплаты за ${monthName} ${yearStr}</b>`
+    : `<b>💰 Зарплата за ${monthName} ${yearStr}</b>`;
+
+  const lines = [header, ''];
+
+  if (projectedText) lines.push(projectedText, '');
+
+  lines.push('<b>Вклад продавцов:</b>');
+  lines.push(...contributions);
+  lines.push(`✴️Итого: ${totalSalesActual.toLocaleString('uk-UA')} ₴`);
+  lines.push('');
+
+  lines.push(`<b>Составляющие з/п:</b>`);
+  lines.push(`${ICON.oper1}База: ${base.toLocaleString('uk-UA')} ₴`);
+  lines.push(`${ICON.oper1}Процент (${percentRateTxt}%): ${percentPart.toLocaleString('uk-UA')} ₴`);
+  lines.push(`${ICON.oper1}Премия: ${bonus.toLocaleString('uk-UA')} ₴`);
+  lines.push(`${ICON.oper2}<b>Итого: ${totalSalaryOne.toLocaleString('uk-UA')} ₴</b>`);
+
+  return lines.join('\n');
+}
+
+
+
+
 // === BOT FACTORY ===
 
 function createBotHandlers(ctx) { // settings, chatId, messageId
@@ -652,7 +803,29 @@ app.post('/', async (req, res) => {
       await bot.updateUserStep({ step: `${opKey}_goods`, opts: { page: 0, messageId } });  // save ID once
 
     } else if (text?.includes(ICON.seller)) {
-      await bot.sendMessage('😘 Молодец');
+      // part 1
+      const lastDates = await getLastDates(settings);
+      const text = `😘 Молодец
+
+<b>Последние введённые операции:</b>
+${ICON.oper1}${OPS.sale.op}......${lastDates[OPS.sale.op]}
+${ICON.oper1}${OPS.income.op}.........${lastDates[OPS.income.op]}
+${ICON.oper1}${OPS.outcome.op}.....${lastDates[OPS.outcome.op]}
+${ICON.oper1}${OPS.discount.op}....${lastDates[OPS.discount.op]}
+${ICON.oper1}${OPS.return.op}........${lastDates[OPS.return.op]}
+`;
+      await bot.sendMessage(text);
+
+      // part 2
+      const zp1 = await calculateSalary(settings, '12.2025');
+      await bot.sendMessage(zp1);
+
+      // part 3
+      const now = new Date();
+      const monthStr = `${(now.getMonth() + 1).toString().padStart(2, '0')}.${now.getFullYear()}`;
+      const zp2 = await calculateSalary(settings, monthStr, true);
+      await bot.sendMessage(zp2);
+
       return res.send('OK');
 
     } else if (opKey && opKey === 'report') {
